@@ -1,0 +1,16 @@
+/target
+Cargo.lock
+Cargo.toml
+uci.sh
+start_lichess_bot.sh
+.cargo/
+src_old
+komodo.bin
+main_sf17.nnue
+nn-37f18f62d772.nnue
+Perfect2023.bin
+Polyglot book format.html
+ProDeo.bin
+start_lichess_bot_turbo.sh
+z-slon-old
+z-slon-old-start

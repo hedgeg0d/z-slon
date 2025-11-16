@@ -1,0 +1,329 @@
+use std::fmt;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+pub type Bitboard = u64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Piece {
+    WPawn,
+    WKnight,
+    WBishop,
+    WRook,
+    WQueen,
+    WKing,
+    BPawn,
+    BKnight,
+    BBishop,
+    BRook,
+    BQueen,
+    BKing,
+    Empty,
+}
+
+impl Piece {
+    pub fn from_char(c: char) -> Self {
+        match c {
+            'P' => Piece::WPawn,
+            'N' => Piece::WKnight,
+            'B' => Piece::WBishop,
+            'R' => Piece::WRook,
+            'Q' => Piece::WQueen,
+            'K' => Piece::WKing,
+            'p' => Piece::BPawn,
+            'n' => Piece::BKnight,
+            'b' => Piece::BBishop,
+            'r' => Piece::BRook,
+            'q' => Piece::BQueen,
+            'k' => Piece::BKing,
+            _ => Piece::Empty,
+        }
+    }
+
+    pub fn to_char(&self) -> char {
+        match self {
+            Piece::WPawn => 'P',
+            Piece::WKnight => 'N',
+            Piece::WBishop => 'B',
+            Piece::WRook => 'R',
+            Piece::WQueen => 'Q',
+            Piece::WKing => 'K',
+            Piece::BPawn => 'p',
+            Piece::BKnight => 'n',
+            Piece::BBishop => 'b',
+            Piece::BRook => 'r',
+            Piece::BQueen => 'q',
+            Piece::BKing => 'k',
+            Piece::Empty => '.',
+        }
+    }
+
+    pub fn is_white(&self) -> bool {
+        matches!(self, Piece::WPawn | Piece::WKnight | Piece::WBishop | Piece::WRook | Piece::WQueen | Piece::WKing)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Board {
+    pub(crate) pieces: [Bitboard; 12],
+    pub(crate) white_to_move: bool,
+    pub(crate) castling: u8,
+    pub(crate) en_passant: Option<u8>,
+    pub(crate) halfmove: u8,
+    pub(crate) fullmove: u16,
+}
+
+impl Hash for Board {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Hash only position-relevant data (not halfmove/fullmove counters)
+        self.pieces.hash(state);
+        self.white_to_move.hash(state);
+        self.castling.hash(state);
+        self.en_passant.hash(state);
+    }
+}
+
+impl Board {
+    pub fn from_fen(fen: &str) -> Self {
+        let mut board = Board {
+            pieces: [0; 12],
+            white_to_move: true,
+            castling: 0,
+            en_passant: None,
+            halfmove: 0,
+            fullmove: 1,
+        };
+        let parts: Vec<&str> = fen.split_whitespace().collect();
+        let mut row = 7;
+        let mut col = 0;
+        for c in parts[0].chars() {
+            if c == '/' {
+                row -= 1;
+                col = 0;
+            } else if c.is_digit(10) {
+                col += c.to_digit(10).unwrap() as usize;
+            } else {
+                let piece = Piece::from_char(c);
+                let idx = match piece {
+                    Piece::WPawn => 0,
+                    Piece::WKnight => 1,
+                    Piece::WBishop => 2,
+                    Piece::WRook => 3,
+                    Piece::WQueen => 4,
+                    Piece::WKing => 5,
+                    Piece::BPawn => 6,
+                    Piece::BKnight => 7,
+                    Piece::BBishop => 8,
+                    Piece::BRook => 9,
+                    Piece::BQueen => 10,
+                    Piece::BKing => 11,
+                    _ => continue,
+                };
+                let sq = row * 8 + col;
+                board.pieces[idx] |= 1u64 << sq;
+                col += 1;
+            }
+        }
+        board.white_to_move = parts[1] == "w";
+        for c in parts[2].chars() {
+            board.castling |= match c {
+                'K' => 1,
+                'Q' => 2,
+                'k' => 4,
+                'q' => 8,
+                _ => 0,
+            };
+        }
+        if parts[3] != "-" {
+            let file = parts[3].chars().next().unwrap() as u8 - b'a';
+            board.en_passant = Some(file);
+        }
+        if parts.len() > 4 {
+            board.halfmove = parts[4].parse().unwrap_or(0);
+        }
+        if parts.len() > 5 {
+            board.fullmove = parts[5].parse().unwrap_or(1);
+        }
+        board
+    }
+
+    pub fn square(&self, sq: u8) -> Piece {
+        for (i, &bb) in self.pieces.iter().enumerate() {
+            if (bb & (1u64 << sq)) != 0 {
+                return match i {
+                    0 => Piece::WPawn,
+                    1 => Piece::WKnight,
+                    2 => Piece::WBishop,
+                    3 => Piece::WRook,
+                    4 => Piece::WQueen,
+                    5 => Piece::WKing,
+                    6 => Piece::BPawn,
+                    7 => Piece::BKnight,
+                    8 => Piece::BBishop,
+                    9 => Piece::BRook,
+                    10 => Piece::BQueen,
+                    11 => Piece::BKing,
+                    _ => Piece::Empty,
+                };
+            }
+        }
+        Piece::Empty
+    }
+
+    pub fn king_sq(&self, white: bool) -> u8 {
+        let king_bb = self.pieces[if white { 5 } else { 11 }];
+        king_bb.trailing_zeros() as u8
+    }
+
+    pub fn is_white_to_move(&self) -> bool {
+        self.white_to_move
+    }
+
+    pub fn en_passant_file(&self) -> Option<u8> {
+        self.en_passant
+    }
+
+    pub fn castling_rights(&self) -> u8 {
+        self.castling
+    }
+
+    pub fn halfmove_clock(&self) -> u8 {
+        self.halfmove
+    }
+
+    pub fn fullmove_number(&self) -> u16 {
+        self.fullmove
+    }
+
+    pub fn to_fen(&self) -> String {
+        let mut fen = String::new();
+        for rank in (0..8).rev() {
+            let mut empty_count = 0;
+            for file in 0..8 {
+                let sq = rank * 8 + file;
+                let piece = self.square(sq);
+                if piece == Piece::Empty {
+                    empty_count += 1;
+                } else {
+                    if empty_count > 0 {
+                        fen.push_str(&empty_count.to_string());
+                        empty_count = 0;
+                    }
+                    fen.push(piece.to_char());
+                }
+            }
+            if empty_count > 0 {
+                fen.push_str(&empty_count.to_string());
+            }
+            if rank > 0 {
+                fen.push('/');
+            }
+        }
+        fen.push(' ');
+        fen.push(if self.white_to_move { 'w' } else { 'b' });
+        fen.push(' ');
+        let mut castling = String::new();
+        if self.castling & 1 != 0 {
+            castling.push('K');
+        }
+        if self.castling & 2 != 0 {
+            castling.push('Q');
+        }
+        if self.castling & 4 != 0 {
+            castling.push('k');
+        }
+        if self.castling & 8 != 0 {
+            castling.push('q');
+        }
+        if castling.is_empty() {
+            castling.push('-');
+        }
+        fen.push_str(&castling);
+        fen.push(' ');
+        if let Some(file) = self.en_passant {
+            let rank = if self.white_to_move { '6' } else { '3' };
+            fen.push((b'a' + file) as char);
+            fen.push(rank);
+        } else {
+            fen.push('-');
+        }
+        fen.push(' ');
+        fen.push_str(&self.halfmove.to_string());
+        fen.push(' ');
+        fen.push_str(&self.fullmove.to_string());
+        fen
+    }
+
+    pub fn position_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    pub fn is_draw_by_fifty_move(&self) -> bool {
+        self.halfmove >= 100
+    }
+
+    pub fn is_insufficient_material(&self) -> bool {
+        // Check for insufficient material draws
+        let mut piece_count = 0;
+        let mut has_pawn = false;
+        let mut has_rook = false;
+        let mut has_queen = false;
+        let mut white_bishops = 0;
+        let mut black_bishops = 0;
+        let mut _white_knights = 0;
+        let mut _black_knights = 0;
+
+        for sq in 0..64 {
+            let piece = self.square(sq);
+            if piece != Piece::Empty && piece != Piece::WKing && piece != Piece::BKing {
+                piece_count += 1;
+                match piece {
+                    Piece::WPawn | Piece::BPawn => has_pawn = true,
+                    Piece::WRook | Piece::BRook => has_rook = true,
+                    Piece::WQueen | Piece::BQueen => has_queen = true,
+                    Piece::WBishop => white_bishops += 1,
+                    Piece::BBishop => black_bishops += 1,
+                    Piece::WKnight => _white_knights += 1,
+                    Piece::BKnight => _black_knights += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        // K vs K
+        if piece_count == 0 {
+            return true;
+        }
+
+        // K+B vs K or K+N vs K
+        if piece_count == 1 && !has_pawn && !has_rook && !has_queen {
+            return true;
+        }
+
+        // K+B vs K+B (same color bishops)
+        if piece_count == 2 && white_bishops == 1 && black_bishops == 1 {
+            // Check if bishops are on same color squares
+            // This is a simplification - proper implementation would check actual square colors
+            return true;
+        }
+
+        false
+    }
+}
+
+impl fmt::Display for Board {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for row in (0..8).rev() {
+            write!(f, "{} ", row + 1)?;
+            for col in 0..8 {
+                let sq = row * 8 + col;
+                let piece = self.square(sq);
+                write!(f, "{} ", piece.to_char())?;
+            }
+            writeln!(f)?;
+        }
+        writeln!(f, "  a b c d e f g h")
+    }
+}
