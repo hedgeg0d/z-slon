@@ -1,6 +1,5 @@
 /target
 Cargo.lock
-Cargo.toml
 uci.sh
 start_lichess_bot.sh
 .cargo/
