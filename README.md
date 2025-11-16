@@ -1,15 +1,16 @@
 # z-slon Chess Engine
 
-A modern chess engine written in Rust featuring NNUE evaluation, opening books, and advanced search techniques.
+A modern chess engine written in Rust featuring embedded NNUE evaluation, opening books, and advanced search techniques.
 
 ## Features
 
 ### Core Engine
-- **NNUE Evaluation**: Neural network evaluation using [timecat](https://crates.io/crates/timecat) with fallback to hand-crafted evaluation
+- **Embedded NNUE**: 72MB Stockfish 17 NNUE network packed into the binary for zero-config evaluation
+- **UCI-First Design**: UCI mode by default for seamless integration with chess GUIs
 - **Opening Books**: Polyglot book support via [polyglot-book-rs](https://crates.io/crates/polyglot-book-rs) crate
 - **Advanced Search**: Multi-threaded alpha-beta with transposition table, move ordering, and pruning techniques
-- **UCI Protocol**: Full UCI compliance with configurable options
-- **Interactive CLI**: Real-time analysis with continuous evaluation mode
+- **Responsive Search**: Can accept commands (like 'stop') during infinite search
+- **Interactive CLI**: Real-time analysis with continuous evaluation mode (via `--cli` flag)
 
 ### Search Features
 - Iterative deepening with aspiration windows
@@ -30,27 +31,41 @@ A modern chess engine written in Rust featuring NNUE evaluation, opening books, 
 cargo build --release
 ```
 
-The optimized binary will be at `./target/release/z-slon`
+The ultra-optimized binary will be at `./target/release/z-slon` (~94MB, includes 72MB embedded NNUE)
+
+**Build optimizations:**
+- Maximum optimization level (opt-level = 3)
+- Link-time optimization (LTO = fat)
+- Single codegen unit for best performance
+- Stripped symbols for minimal size
+- Abort on panic for smaller binary
 
 ## Usage
 
-### Command Line Options
+### UCI Mode (Default - For Chess GUIs)
 
+```bash
+./target/release/z-slon
+```
+
+The engine starts in UCI mode automatically. Simply launch it from your chess GUI (Arena, ChessBase, Lichess, etc.).
+
+**Command Line Options:**
 ```bash
 ./target/release/z-slon [OPTIONS]
 
 Options:
-    --uci                Enable UCI mode
-    --nnue <path>        Load NNUE evaluation file
+    --cli                Enable interactive CLI mode
+    --nnue <path>        Load external NNUE file (overrides embedded)
     --book <path>        Load Polyglot opening book
     --threads <n>        Set number of search threads (default: 1)
     --debug              Enable debug output
 ```
 
-### Interactive CLI Mode (Default)
+### Interactive CLI Mode
 
 ```bash
-./target/release/z-slon
+./target/release/z-slon --cli
 ```
 
 #### CLI Commands
@@ -104,31 +119,43 @@ Stopping eval...
   a b c d e f g h
 ```
 
-### UCI Mode (For Chess GUIs)
+### UCI Protocol
 
-```bash
-./target/release/z-slon --uci
-```
+The engine runs in UCI mode by default and supports standard UCI commands.
 
-#### UCI Options
+#### Supported UCI Options
 
-- **Hash** (1-1024 MB): Transposition table size (default: 16)
-- **Threads** (1-64): Number of search threads (default: 1)  
+- **Hash** (1-33554432 MB): Transposition table size (default: 16)
+- **Threads** (1-512): Number of search threads (default: 1)
+- **EvalFile** (string): NNUE file path or `<embedded>` (default: `<embedded>`)
 - **Book** (string): Path to Polyglot opening book file
+- **UCI_Chess960** (check): Chess960 mode (not yet implemented)
+- **Ponder** (check): Pondering support (not yet implemented)
+- **MultiPV** (1-500): Multiple principal variations (not yet implemented)
+- **Move Overhead** (0-5000 ms): Time management overhead (not yet implemented)
+- **nodestime** (0-10000): Nodes per second (not yet implemented)
 
 #### UCI Commands
 
 ```bash
-# Load NNUE evaluation
-use nnue /path/to/model.nnue
-
 # Set options
-setoption name Threads value 4
-setoption name Hash value 64
+setoption name Threads value 8
+setoption name Hash value 256
 setoption name Book value /path/to/book.bin
 
+# Export embedded NNUE (like Stockfish)
+setoption name EvalFile value /tmp/exported.nnue
+
+# Load external NNUE
+setoption name EvalFile value /path/to/custom.nnue
+
 # Quick test
-echo -e "uci\nposition startpos\ngo depth 5\nquit" | ./target/release/z-slon --uci
+echo -e "uci\nposition startpos\ngo depth 5\nquit" | ./target/release/z-slon
+
+# Test infinite search with stop
+echo -e "position startpos\ngo infinite" | ./target/release/z-slon &
+sleep 3
+echo "stop"
 ```
 
 ## Using with Chess GUIs
@@ -142,7 +169,7 @@ echo -e "uci\nposition startpos\ngo depth 5\nquit" | ./target/release/z-slon --u
 ### Cutechess-cli
 ```bash
 cutechess-cli \
-  -engine cmd=./target/release/z-slon args="--uci --nnue model.nnue --book book.bin" proto=uci \
+  -engine cmd=./target/release/z-slon proto=uci \
   -engine cmd=stockfish proto=uci \
   -each tc=40/60 \
   -rounds 10
@@ -153,21 +180,27 @@ Compatible with [lichess-bot](https://github.com/lichess-bot-devs/lichess-bot)
 
 ## NNUE Evaluation
 
-z-slon supports NNUE (Efficiently Updatable Neural Network) evaluation via the [timecat](https://crates.io/crates/timecat) crate:
+z-slon has **main_sf17.nnue (72MB) embedded directly in the binary** and uses it automatically. No external files needed!
 
+**Export the embedded NNUE (like Stockfish):**
 ```bash
-# Load NNUE file at startup
-./target/release/z-slon --nnue main_sf17.nnue
-
-# Or load via UCI
-use nnue /path/to/model.nnue
+echo "setoption name EvalFile value /tmp/my.nnue" | ./target/release/z-slon
 ```
 
-When NNUE is loaded, the engine automatically uses neural network evaluation. If no NNUE is loaded or loading fails, it falls back to hand-crafted evaluation (HCE).
+**Load a different NNUE:**
+```bash
+# Via command line
+./target/release/z-slon --nnue /path/to/custom.nnue
+
+# Via UCI option
+setoption name EvalFile value /path/to/custom.nnue
+```
+
+The engine uses NNUE evaluation via the [timecat](https://crates.io/crates/timecat) crate. If NNUE loading fails, it falls back to hand-crafted evaluation (HCE).
 
 ## Opening Books
 
-z-slon supports Polyglot opening books via the [polyglot-book-rs](https://crates.io/crates/polyglot-book-rs) crate:
+z-slon supports Polyglot opening books:
 
 ```bash
 # Load book at startup  
@@ -177,18 +210,20 @@ z-slon supports Polyglot opening books via the [polyglot-book-rs](https://crates
 setoption name Book value /path/to/book.bin
 ```
 
-The engine will automatically play book moves when available, with a preference for higher-weighted moves.
+The engine automatically plays book moves when available, preferring higher-weighted moves.
 
 ## Performance
 
-The engine is optimized for speed with:
-- Link-time optimization (LTO)
-- Single codegen unit
-- Native CPU instructions (`target-cpu=native`)
-- Aggressive optimization level
-- Stripped binaries
+**Ultra-optimized build settings:**
+- Maximum optimization level (`opt-level = 3`)
+- Fat link-time optimization (`lto = "fat"`)
+- Single codegen unit (`codegen-units = 1`)
+- Stripped symbols (`strip = true`)
+- Abort on panic (`panic = "abort"`)
 
-Typical performance on modern hardware: 200K-500K nodes/second (single thread)
+**Typical performance:** 100K-200K nodes/second (single thread) with NNUE evaluation
+
+**Responsive during search:** The engine can receive and process commands (like `stop`) even during `go infinite`
 
 ## Architecture
 
@@ -200,9 +235,11 @@ Typical performance on modern hardware: 200K-500K nodes/second (single thread)
 - **Pruning Techniques**: Futility, reverse futility, razoring, delta pruning
 - **Quiescence Search**: Tactical search to avoid horizon effect
 - **Parallel Search**: Multi-threaded search with shared transposition table
+- **Responsive Search**: Non-blocking search allows commands during `go infinite`
 
 ### Evaluation System
-- **NNUE Primary**: Neural network evaluation via timecat integration
+- **Embedded NNUE**: Stockfish 17 NNUE (72MB) packed into binary, loaded automatically
+- **NNUE Export**: Can export embedded network like Stockfish
 - **HCE Fallback**: Material, piece-square tables, mobility, king safety
 - **Evaluation Caching**: Position-specific evaluation storage
 
@@ -249,9 +286,10 @@ perf report
 
 - **[timecat](https://crates.io/crates/timecat)**: NNUE evaluation support
 - **[polyglot-book-rs](https://crates.io/crates/polyglot-book-rs)**: Polyglot opening book support  
-- **[tokio](https://crates.io/crates/tokio)**: Async runtime for concurrent operations
+- **[tokio](https://crates.io/crates/tokio)**: Async runtime for responsive concurrent operations
 - **[rustyline](https://crates.io/crates/rustyline)**: Interactive CLI with readline support
 - **[clap](https://crates.io/crates/clap)**: Command-line argument parsing
+- **[lazy_static](https://crates.io/crates/lazy_static)**: Static initialization for FFI bindings
 
 ## License
 
@@ -260,6 +298,17 @@ MIT License - See LICENSE file for details
 ## Author
 
 hedgegod
+
+## Recent Improvements (v0.3.0)
+
+- ✅ **UCI by default**: Engine starts in UCI mode automatically (use `--cli` for interactive mode)
+- ✅ **Embedded NNUE**: 72MB Stockfish 17 NNUE packed into binary, auto-loaded
+- ✅ **NNUE export**: Can export embedded network via UCI option (like Stockfish)
+- ✅ **Stockfish-like options**: Hash, Threads, EvalFile, Book, and more UCI options
+- ✅ **Responsive search**: Commands like `stop` work during `go infinite`
+- ✅ **Ultra-optimized build**: Fat LTO, single codegen unit, maximum optimization
+- ✅ **Zero warnings**: Clean compilation
+- ✅ **Single binary**: Only z-slon binary is built
 
 ## Contributing
 
@@ -270,3 +319,4 @@ Contributions welcome! Areas for improvement:
 - Multi-PV search
 - Lazy SMP improvements
 - Additional pruning techniques
+- UCI_Chess960 support
