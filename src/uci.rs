@@ -14,11 +14,13 @@ pub struct UciEngine {
     board: Board,
     depth: AtomicU32,
     threads: AtomicU32,
+    hash_size: AtomicU32,
     searching: Arc<AtomicBool>,
     cancel_flag: Arc<AtomicBool>,
     position_history: Vec<u64>,
     nnue: NnueEvaluator,
     book: Option<OptimizedPolyglotBook>,
+    nnue_file: Option<String>,
 }
 
 impl UciEngine {
@@ -28,11 +30,13 @@ impl UciEngine {
             board: Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
             depth: AtomicU32::new(20),
             threads: AtomicU32::new(1),
+            hash_size: AtomicU32::new(16),
             searching: Arc::new(AtomicBool::new(false)),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             position_history: Vec::new(),
             nnue: NnueEvaluator::new(),
             book: None,
+            nnue_file: None,
         }
     }
     
@@ -41,32 +45,36 @@ impl UciEngine {
             board: Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
             depth: AtomicU32::new(20),
             threads: AtomicU32::new(1),
+            hash_size: AtomicU32::new(16),
             searching: Arc::new(AtomicBool::new(false)),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             position_history: Vec::new(),
             nnue,
             book: None,
+            nnue_file: None,
         }
+    }
+    
+    pub fn set_threads(&mut self, threads: u32) {
+        self.threads.store(threads.clamp(1, 64), Ordering::SeqCst);
     }
     
     pub fn load_book(&mut self, path: &str) {
         match OptimizedPolyglotBook::load(path) {
             Ok(book) => {
-                if crate::is_debug_mode() {
-                    eprintln!("Polyglot book loaded: {}", path);
-                    let (entries, first_key, last_key) = book.debug_info();
-                    eprintln!("[BOOK] Entries in book: {}", entries);
-                    if let Some(first_key) = first_key {
-                        eprintln!("[BOOK] First entry key: 0x{:016X}", first_key);
-                    }
-                    if let Some(last_key) = last_key {
-                        eprintln!("[BOOK] Last entry key: 0x{:016X}", last_key);
-                    }
+                println!("info string Polyglot book loaded: {}", path);
+                let (entries, first_key, last_key) = book.debug_info();
+                println!("info string Book entries: {}", entries);
+                if let Some(first_key) = first_key {
+                    println!("info string First entry key: 0x{:016X}", first_key);
+                }
+                if let Some(last_key) = last_key {
+                    println!("info string Last entry key: 0x{:016X}", last_key);
                 }
                 self.book = Some(book);
             }
             Err(e) => {
-                eprintln!("Failed to load Polyglot book: {}", e);
+                println!("info string Failed to load Polyglot book: {}", e);
             }
         }
     }
@@ -86,16 +94,25 @@ impl UciEngine {
     }
 
     pub async fn run(&mut self) {
-        let stdin = io::stdin();
-        let mut lines = stdin.lock().lines();
-
-        while let Some(Ok(line)) = lines.next() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        
+        // Spawn input reader task
+        tokio::spawn(async move {
+            let stdin = io::stdin();
+            let mut lines = stdin.lock().lines();
+            while let Some(Ok(line)) = lines.next() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    if tx.send(trimmed.to_string()).is_err() {
+                        break;
+                    }
+                }
             }
+        });
 
-            if !self.handle_command(trimmed).await {
+        // Process commands
+        while let Some(command) = rx.recv().await {
+            if !self.handle_command(&command).await {
                 break;
             }
         }
@@ -109,10 +126,16 @@ impl UciEngine {
 
         match parts[0] {
             "uci" => {
-                println!("id name z-slon");
+                println!("id name z-slon 0.2.0");
                 println!("id author hedgegod");
-                println!("option name Hash type spin default 16 min 1 max 1024");
-                println!("option name Threads type spin default 1 min 1 max 64");
+                println!("option name Hash type spin default 16 min 1 max 33554432");
+                println!("option name Threads type spin default 1 min 1 max 512");
+                println!("option name UCI_Chess960 type check default false");
+                println!("option name Ponder type check default false");
+                println!("option name MultiPV type spin default 1 min 1 max 500");
+                println!("option name Move Overhead type spin default 10 min 0 max 5000");
+                println!("option name nodestime type spin default 0 min 0 max 10000");
+                println!("option name EvalFile type string default <embedded>");
                 println!("option name Book type string default <empty>");
                 println!("uciok");
             }
@@ -374,6 +397,8 @@ impl UciEngine {
         if self.nnue.is_loaded() {
             if let Some(path) = self.nnue.path() {
                 println!("info string Using NNUE evaluation: {}", path);
+            } else {
+                println!("info string Using NNUE evaluation");
             }
         } else {
             println!("info string Using HCE evaluation");
@@ -388,76 +413,126 @@ impl UciEngine {
             })
         });
 
-        let mut best_move = None;
-        let mut best_depth = 0;
+        // Spawn search task that runs independently
+        tokio::spawn(async move {
+            let mut best_move = None;
+            let mut best_depth = 0;
 
-        // Receive and print search info
-        while let Some(event) = rx.recv().await {
-            // Always use the move from the deepest completed search
-            if let Some(mv) = event.best_move {
-                if event.depth >= best_depth {
-                    best_move = Some(mv);
-                    best_depth = event.depth;
-                }
-            }
-            let elapsed = start_time.elapsed().as_millis() as u64;
-            
-            print!("info depth {} seldepth {} score cp {} nodes {}", 
-                event.depth, event.seldepth, event.score, event.nodes);
-            
-            if elapsed > 0 {
-                let nps = (event.nodes as u64 * 1000) / elapsed;
-                print!(" time {} nps {}", elapsed, nps);
-            }
-            
-            if event.pv_len > 0 {
-                print!(" pv");
-                for i in 0..event.pv_len {
-                    if let Some(mv) = event.pv[i] {
-                        print!(" {}", move_to_uci(mv));
+            // Receive and print search info
+            while let Some(event) = rx.recv().await {
+                // Always use the move from the deepest completed search
+                if let Some(mv) = event.best_move {
+                    if event.depth >= best_depth {
+                        best_move = Some(mv);
+                        best_depth = event.depth;
                     }
                 }
+                let elapsed = start_time.elapsed().as_millis() as u64;
+                
+                print!("info depth {} seldepth {} score cp {} nodes {}", 
+                    event.depth, event.seldepth, event.score, event.nodes);
+                
+                if elapsed > 0 {
+                    let nps = (event.nodes as u64 * 1000) / elapsed;
+                    print!(" time {} nps {}", elapsed, nps);
+                }
+                
+                if event.pv_len > 0 {
+                    print!(" pv");
+                    for i in 0..event.pv_len {
+                        if let Some(mv) = event.pv[i] {
+                            print!(" {}", move_to_uci(mv));
+                        }
+                    }
+                }
+                
+                println!();
             }
-            
-            println!();
-        }
 
-        let _ = handle.await;
-        searching_clone.store(false, Ordering::SeqCst);
+            let _ = handle.await;
+            searching_clone.store(false, Ordering::SeqCst);
 
-        // Send bestmove
-        if let Some(mv) = best_move {
-            println!("bestmove {}", move_to_uci(mv));
-        } else {
-            println!("bestmove 0000");
-        }
+            // Send bestmove
+            if let Some(mv) = best_move {
+                println!("bestmove {}", move_to_uci(mv));
+            } else {
+                println!("bestmove 0000");
+            }
+        });
     }
 
     fn handle_setoption(&mut self, parts: &[&str]) {
-        if parts.len() < 4 || parts[0] != "name" {
+        if parts.len() < 2 || parts[0] != "name" {
             return;
         }
 
-        let name = parts[1].to_lowercase();
+        // Find "name" and "value" positions
+        let name_start = 1;
+        let mut name_end = name_start;
+        let mut value_start = None;
         
-        if parts.len() >= 4 && parts[2] == "value" {
-            let value = parts[3];
-            
-            match name.as_str() {
-                "threads" => {
-                    if let Ok(t) = value.parse::<u32>() {
-                        self.threads.store(t.clamp(1, 64), Ordering::SeqCst);
+        for (i, &part) in parts.iter().enumerate().skip(name_start) {
+            if part == "value" {
+                name_end = i;
+                value_start = Some(i + 1);
+                break;
+            }
+        }
+        
+        if name_end == name_start {
+            name_end = parts.len();
+        }
+        
+        let option_name = parts[name_start..name_end].join(" ").to_lowercase();
+        
+        if let Some(value_idx) = value_start {
+            if value_idx < parts.len() {
+                let value = parts[value_idx..].join(" ");
+                
+                match option_name.as_str() {
+                    "threads" => {
+                        if let Ok(t) = value.parse::<u32>() {
+                            self.threads.store(t.clamp(1, 512), Ordering::SeqCst);
+                            println!("info string Threads set to {}", t.clamp(1, 512));
+                        }
                     }
-                }
-                "hash" => {
-                    // Hash table size - not implemented yet
-                }
-                "book" => {
-                    if !value.is_empty() && value != "<empty>" {
-                        self.load_book(value);
+                    "hash" => {
+                        if let Ok(h) = value.parse::<u32>() {
+                            self.hash_size.store(h.clamp(1, 33554432), Ordering::SeqCst);
+                            println!("info string Hash size set to {} MB", h.clamp(1, 33554432));
+                        }
                     }
+                    "book" => {
+                        if !value.is_empty() && value != "<empty>" {
+                            self.load_book(&value);
+                        }
+                    }
+                    "evalfile" => {
+                        if value == "<embedded>" {
+                            println!("info string Using embedded NNUE");
+                        } else {
+                            self.handle_evalfile_export(&value);
+                        }
+                    }
+                    "uci_chess960" | "ponder" | "multipv" | "move overhead" | "nodestime" => {
+                        println!("info string Option {} not yet implemented", option_name);
+                    }
+                    _ => {}
                 }
-                _ => {}
+            }
+        }
+    }
+    
+    fn handle_evalfile_export(&mut self, path: &str) {
+        use crate::nnue::EMBEDDED_NNUE;
+        
+        match std::fs::write(path, EMBEDDED_NNUE) {
+            Ok(_) => {
+                println!("info string Exported embedded NNUE to: {}", path);
+                self.nnue_file = Some(path.to_string());
+            }
+            Err(e) => {
+                println!("info string Failed to export NNUE: {}", e);
             }
         }
     }
@@ -478,6 +553,57 @@ impl UciEngine {
                 println!("info string Failed to load NNUE: {}", e);
             }
         }
+    }
+}
+
+impl UciEngine {
+    // FFI helper methods for Android bindings
+    #[allow(dead_code)]
+    pub fn set_position_from_fen(&mut self, fen: &str) {
+        self.board = Board::from_fen(fen);
+        self.clear_position_history();
+        self.update_position_history();
+    }
+    
+    #[allow(dead_code)]
+    pub fn get_best_move(&self, _depth: u32) -> Option<String> {
+        // Placeholder - real implementation would need async support
+        None
+    }
+    
+    #[allow(dead_code)]
+    pub fn get_eval(&self) -> i32 {
+        use crate::eval::evaluate;
+        let breakdown = evaluate(&self.board);
+        breakdown.total
+    }
+    
+    #[allow(dead_code)]
+    pub fn apply_move_uci(&mut self, move_str: &str) -> bool {
+        if let Some(mv) = self.parse_uci_move(move_str) {
+            apply_move(&mut self.board, mv);
+            self.update_position_history();
+            true
+        } else {
+            false
+        }
+    }
+    
+    #[allow(dead_code)]
+    pub fn get_legal_moves(&self) -> Option<String> {
+        let moves = legal_moves(&self.board);
+        let moves_str = moves.iter()
+            .map(|m| move_to_uci(*m))
+            .collect::<Vec<_>>()
+            .join(",");
+        Some(moves_str)
+    }
+    
+    #[allow(dead_code)]
+    pub fn reset(&mut self) {
+        self.board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        self.clear_position_history();
+        self.update_position_history();
     }
 }
 

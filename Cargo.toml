@@ -1,7 +1,18 @@
 [package]
 name = "z-slon"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
+
+[[bin]]
+name = "z-slon"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -9,3 +20,4 @@ rustyline = "14"
 clap = { version = "4", features = ["derive"] }
 timecat = { version = "1.49", features = ["inbuilt_nnue"] }
 polyglot-book-rs = "0.1.0"
+lazy_static = "1.5"

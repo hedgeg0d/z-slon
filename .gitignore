@@ -5,7 +5,6 @@ start_lichess_bot.sh
 .cargo/
 src_old
 komodo.bin
-main_sf17.nnue
 nn-37f18f62d772.nnue
 Perfect2023.bin
 Polyglot book format.html

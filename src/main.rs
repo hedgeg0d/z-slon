@@ -23,9 +23,9 @@ use clap::Parser;
 #[command(name = "z-slon")]
 #[command(about = "A chess engine with NNUE support", long_about = None)]
 struct Args {
-    /// Enable UCI mode
+    /// Enable CLI mode (default is UCI mode)
     #[arg(long)]
-    uci: bool,
+    cli: bool,
     
     /// Path to NNUE file
     #[arg(long)]
@@ -110,14 +110,10 @@ async fn main() {
         }
     }
     
-    // Check if stdin is a terminal - if not, assume UCI mode
-    let uci_mode = args.uci || {
-        use std::io::IsTerminal;
-        !std::io::stdin().is_terminal()
-    };
-    
-    if uci_mode {
+    // Default mode is UCI, unless --cli flag is provided
+    if !args.cli {
         let mut uci_engine = uci::UciEngine::new_with_nnue(nnue_evaluator);
+        uci_engine.set_threads(args.threads);
         if let Some(book_path) = &args.book {
             uci_engine.load_book(book_path);
         }

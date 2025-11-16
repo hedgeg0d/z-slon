@@ -69,6 +69,7 @@ impl SearchTables {
         }
     }
 
+    #[allow(dead_code)]
     fn clear(&mut self) {
         self.killer_moves = [[None; MAX_KILLERS]; MAX_PLY];
         self.history = [[0; 64]; 64];

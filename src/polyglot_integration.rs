@@ -97,6 +97,7 @@ impl OptimizedPolyglotBook {
 
     /// Get all moves for a position with their weights.
     /// Returns moves sorted by weight (highest first).
+    #[allow(dead_code)]
     pub fn get_all_moves(&self, board: &Board) -> Vec<(Move, u16)> {
         self.book.get_all_moves(board)
             .into_iter()
@@ -105,6 +106,7 @@ impl OptimizedPolyglotBook {
     }
 
     /// Get the best move with its weight and position hash.
+    #[allow(dead_code)]
     pub fn get_best_move_with_info(&self, board: &Board) -> Option<(Move, u16, u64)> {
         self.book.get_best_move(board)
             .map(|entry| (
@@ -115,11 +117,13 @@ impl OptimizedPolyglotBook {
     }
 
     /// Check if a position exists in the book.
+    #[allow(dead_code)]
     pub fn has_position(&self, board: &Board) -> bool {
         self.book.has_position(board)
     }
 
     /// Get the number of entries in the book.
+    #[allow(dead_code)]
     pub fn entry_count(&self) -> usize {
         self.book.entry_count()
     }

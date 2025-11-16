@@ -3,6 +3,8 @@ use crate::board::Board;
 use timecat::evaluate::EvaluatorNNUE;
 use timecat::Board as TimecatBoard;
 
+pub const EMBEDDED_NNUE: &[u8] = include_bytes!("../main_sf17.nnue");
+
 pub struct NnueEvaluator {
     enabled: Arc<RwLock<bool>>,
     path: Arc<RwLock<Option<String>>>,
@@ -10,6 +12,15 @@ pub struct NnueEvaluator {
 
 impl NnueEvaluator {
     pub fn new() -> Self {
+        // Automatically enable embedded NNUE
+        Self {
+            enabled: Arc::new(RwLock::new(true)),
+            path: Arc::new(RwLock::new(Some("<embedded>".to_string()))),
+        }
+    }
+    
+    #[allow(dead_code)]
+    pub fn new_disabled() -> Self {
         Self {
             enabled: Arc::new(RwLock::new(false)),
             path: Arc::new(RwLock::new(None)),
