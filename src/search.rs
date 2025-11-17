@@ -135,6 +135,7 @@ pub fn search_position(
     position_history: Vec<u64>,
     cancel_flag: Arc<AtomicBool>,
     nnue: Option<NnueEvaluator>,
+    multi_pv: usize,
     mut on_progress: impl FnMut(SearchEvent),
 ) {
     let threads = threads.max(1).min(64);
@@ -172,6 +173,7 @@ pub fn search_position(
             &mut position_history,
             &cancel_flag,
             &nnue,
+            multi_pv.max(1),
             &mut on_progress,
         );
     } else {
@@ -185,6 +187,7 @@ pub fn search_position(
             &mut position_history,
             &cancel_flag,
             &nnue,
+            multi_pv.max(1),
             &best_result,
             &mut on_progress,
         );
@@ -199,9 +202,10 @@ fn search_single_thread(
     position_history: &mut PositionHistory,
     cancel_flag: &Arc<AtomicBool>,
     nnue: &Option<NnueEvaluator>,
+    multi_pv: usize,
     on_progress: &mut impl FnMut(SearchEvent),
 ) {
-    let mut prev_score = 0;
+    let mut prev_scores = vec![0; multi_pv];
     let mut tables = SearchTables::new();
 
     for current_depth in 1..=depth {
@@ -209,36 +213,53 @@ fn search_single_thread(
             break;
         }
 
-        let (depth_move, depth_score, pv) = search_root_aspiration(
-            &board,
-            current_depth,
-            prev_score,
-            nodes,
-            tt,
-            position_history,
-            cancel_flag,
-            nnue,
-            &mut tables,
-        );
-
-        let was_cancelled = cancel_flag.load(Ordering::Relaxed);
+        let mut excluded_moves = Vec::new();
         
-        if !was_cancelled && depth_move.is_some() {
-            prev_score = depth_score;
+        for pv_idx in 0..multi_pv {
+            let prev_score = prev_scores.get(pv_idx).copied().unwrap_or(0);
             
-            let event = SearchEvent {
-                depth: current_depth,
-                seldepth: current_depth,
-                best_move: depth_move,
-                nodes: nodes.load(Ordering::Relaxed),
-                score: prev_score,
-                pv,
-                pv_len: pv.iter().take_while(|m| m.is_some()).count(),
-            };
-            on_progress(event);
+            let (depth_move, depth_score, pv) = search_root_aspiration(
+                &board,
+                current_depth,
+                prev_score,
+                nodes,
+                tt,
+                position_history,
+                cancel_flag,
+                nnue,
+                &mut tables,
+                &excluded_moves,
+            );
+
+            let was_cancelled = cancel_flag.load(Ordering::Relaxed);
+            
+            if !was_cancelled && depth_move.is_some() {
+                if pv_idx < prev_scores.len() {
+                    prev_scores[pv_idx] = depth_score;
+                }
+                
+                let event = SearchEvent {
+                    depth: current_depth,
+                    seldepth: current_depth,
+                    best_move: depth_move,
+                    nodes: nodes.load(Ordering::Relaxed),
+                    score: depth_score,
+                    pv,
+                    pv_len: pv.iter().take_while(|m| m.is_some()).count(),
+                };
+                on_progress(event);
+                
+                if let Some(mv) = depth_move {
+                    excluded_moves.push(mv);
+                }
+            }
+            
+            if was_cancelled {
+                break;
+            }
         }
         
-        if was_cancelled {
+        if cancel_flag.load(Ordering::Relaxed) {
             break;
         }
     }
@@ -253,6 +274,7 @@ fn search_lazy_smp(
     position_history: &mut PositionHistory,
     cancel_flag: &Arc<AtomicBool>,
     nnue: &Option<NnueEvaluator>,
+    multi_pv: usize,
     best_result: &Arc<Mutex<(Option<Move>, i32, [Option<Move>; 32])>>,
     on_progress: &mut impl FnMut(SearchEvent),
 ) {
@@ -275,6 +297,7 @@ fn search_lazy_smp(
                 board,
                 depth,
                 thread_id,
+                multi_pv,
                 &nodes,
                 &tt,
                 &mut position_history,
@@ -291,6 +314,7 @@ fn search_lazy_smp(
     main_thread_search(
         board,
         depth,
+        multi_pv,
         nodes,
         tt,
         position_history,
@@ -309,6 +333,7 @@ fn search_lazy_smp(
 fn main_thread_search(
     board: Board,
     depth: u32,
+    multi_pv: usize,
     nodes: &Arc<AtomicU64>,
     tt: &TranspositionTable,
     position_history: &mut PositionHistory,
@@ -317,7 +342,7 @@ fn main_thread_search(
     best_result: &Arc<Mutex<(Option<Move>, i32, [Option<Move>; 32])>>,
     on_progress: &mut impl FnMut(SearchEvent),
 ) {
-    let mut prev_score = 0;
+    let mut prev_scores = vec![0; multi_pv];
     let mut tables = SearchTables::new();
 
     for current_depth in 1..=depth {
@@ -325,41 +350,62 @@ fn main_thread_search(
             break;
         }
 
-        let (depth_move, depth_score, pv) = search_root_aspiration(
-            &board,
-            current_depth,
-            prev_score,
-            nodes,
-            tt,
-            position_history,
-            cancel_flag,
-            nnue,
-            &mut tables,
-        );
-
-        let was_cancelled = cancel_flag.load(Ordering::Relaxed);
+        let mut excluded_moves = Vec::new();
         
-        if !was_cancelled && depth_move.is_some() {
-            prev_score = depth_score;
+        for pv_idx in 0..multi_pv {
+            let prev_score = prev_scores.get(pv_idx).copied().unwrap_or(0);
             
-            // Update shared best result
-            if let Ok(mut best) = best_result.lock() {
-                *best = (depth_move, depth_score, pv);
+            let (depth_move, depth_score, pv) = search_root_aspiration(
+                &board,
+                current_depth,
+                prev_score,
+                nodes,
+                tt,
+                position_history,
+                cancel_flag,
+                nnue,
+                &mut tables,
+                &excluded_moves,
+            );
+
+            let was_cancelled = cancel_flag.load(Ordering::Relaxed);
+            
+            if !was_cancelled && depth_move.is_some() {
+                if pv_idx < prev_scores.len() {
+                    prev_scores[pv_idx] = depth_score;
+                }
+                
+                // Update shared best result with first PV line
+                if pv_idx == 0 {
+                    if let Ok(mut best) = best_result.try_lock() {
+                        if best.0.is_none() || depth_score > best.1 {
+                            *best = (depth_move, depth_score, pv);
+                        }
+                    }
+                }
+                
+                let event = SearchEvent {
+                    depth: current_depth,
+                    seldepth: current_depth,
+                    best_move: depth_move,
+                    nodes: nodes.load(Ordering::Relaxed),
+                    score: depth_score,
+                    pv,
+                    pv_len: pv.iter().take_while(|m| m.is_some()).count(),
+                };
+                on_progress(event);
+                
+                if let Some(mv) = depth_move {
+                    excluded_moves.push(mv);
+                }
             }
             
-            let event = SearchEvent {
-                depth: current_depth,
-                seldepth: current_depth,
-                best_move: depth_move,
-                nodes: nodes.load(Ordering::Relaxed),
-                score: prev_score,
-                pv,
-                pv_len: pv.iter().take_while(|m| m.is_some()).count(),
-            };
-            on_progress(event);
+            if was_cancelled {
+                break;
+            }
         }
         
-        if was_cancelled {
+        if cancel_flag.load(Ordering::Relaxed) {
             break;
         }
     }
@@ -369,6 +415,7 @@ fn helper_thread_search(
     board: Board,
     depth: u32,
     thread_id: u32,
+    multi_pv: usize,
     nodes: &Arc<AtomicU64>,
     tt: &TranspositionTable,
     position_history: &mut PositionHistory,
@@ -376,7 +423,7 @@ fn helper_thread_search(
     nnue: &Option<NnueEvaluator>,
     best_result: &Arc<Mutex<(Option<Move>, i32, [Option<Move>; 32])>>,
 ) {
-    let mut prev_score = 0;
+    let mut prev_scores = vec![0; multi_pv];
     let mut tables = SearchTables::new();
     
     // Lazy SMP: Each helper thread searches with slight depth variation
@@ -395,32 +442,51 @@ fn helper_thread_search(
             current_depth
         };
 
-        let (depth_move, depth_score, pv) = search_root_aspiration(
-            &board,
-            search_depth,
-            prev_score,
-            nodes,
-            tt,
-            position_history,
-            cancel_flag,
-            nnue,
-            &mut tables,
-        );
-
-        let was_cancelled = cancel_flag.load(Ordering::Relaxed);
+        let mut excluded_moves = Vec::new();
         
-        if !was_cancelled && depth_move.is_some() {
-            prev_score = depth_score;
+        for pv_idx in 0..multi_pv {
+            let prev_score = prev_scores.get(pv_idx).copied().unwrap_or(0);
             
-            // Try to update shared best result if this is better
-            if let Ok(mut best) = best_result.try_lock() {
-                if best.0.is_none() || depth_score > best.1 {
-                    *best = (depth_move, depth_score, pv);
+            let (depth_move, depth_score, pv) = search_root_aspiration(
+                &board,
+                search_depth,
+                prev_score,
+                nodes,
+                tt,
+                position_history,
+                cancel_flag,
+                nnue,
+                &mut tables,
+                &excluded_moves,
+            );
+
+            let was_cancelled = cancel_flag.load(Ordering::Relaxed);
+            
+            if !was_cancelled && depth_move.is_some() {
+                if pv_idx < prev_scores.len() {
+                    prev_scores[pv_idx] = depth_score;
                 }
+                
+                // Update shared best result with first PV line only
+                if pv_idx == 0 {
+                    if let Ok(mut best) = best_result.try_lock() {
+                        if best.0.is_none() || depth_score > best.1 {
+                            *best = (depth_move, depth_score, pv);
+                        }
+                    }
+                }
+                
+                if let Some(mv) = depth_move {
+                    excluded_moves.push(mv);
+                }
+            }
+            
+            if was_cancelled {
+                break;
             }
         }
         
-        if was_cancelled {
+        if cancel_flag.load(Ordering::Relaxed) {
             break;
         }
     }
@@ -438,6 +504,7 @@ fn search_root_aspiration(
     cancel_flag: &Arc<AtomicBool>,
     nnue: &Option<NnueEvaluator>,
     tables: &mut SearchTables,
+    excluded_moves: &[Move],
 ) -> (Option<Move>, i32, [Option<Move>; 32]) {
     let mut alpha = prev_score - ASPIRATION_WINDOW;
     let mut beta = prev_score + ASPIRATION_WINDOW;
@@ -450,7 +517,7 @@ fn search_root_aspiration(
     }
 
     loop {
-        let (mv, score, pv) = search_root(board, depth, alpha, beta, nodes, tt, position_history, cancel_flag, nnue, tables);
+        let (mv, score, pv) = search_root(board, depth, alpha, beta, nodes, tt, position_history, cancel_flag, nnue, tables, excluded_moves);
         
         if cancel_flag.load(Ordering::Relaxed) {
             return (mv, score, pv);
@@ -488,10 +555,18 @@ fn search_root(
     cancel_flag: &Arc<AtomicBool>,
     nnue: &Option<NnueEvaluator>,
     tables: &mut SearchTables,
+    excluded_moves: &[Move],
 ) -> (Option<Move>, i32, [Option<Move>; 32]) {
     let mut moves = legal_moves(board);
     if moves.is_empty() {
         return (None, terminal_score(board, 0), [None; 32]);
+    }
+    
+    if !excluded_moves.is_empty() {
+        moves.retain(|m| !excluded_moves.contains(m));
+        if moves.is_empty() {
+            return (None, 0, [None; 32]);
+        }
     }
 
     let hash = board.position_hash();

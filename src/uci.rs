@@ -15,6 +15,7 @@ pub struct UciEngine {
     depth: AtomicU32,
     threads: AtomicU32,
     hash_size: AtomicU32,
+    multi_pv: AtomicU32,
     searching: Arc<AtomicBool>,
     cancel_flag: Arc<AtomicBool>,
     position_history: Vec<u64>,
@@ -31,6 +32,7 @@ impl UciEngine {
             depth: AtomicU32::new(20),
             threads: AtomicU32::new(1),
             hash_size: AtomicU32::new(16),
+            multi_pv: AtomicU32::new(1),
             searching: Arc::new(AtomicBool::new(false)),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             position_history: Vec::new(),
@@ -46,6 +48,7 @@ impl UciEngine {
             depth: AtomicU32::new(20),
             threads: AtomicU32::new(1),
             hash_size: AtomicU32::new(16),
+            multi_pv: AtomicU32::new(1),
             searching: Arc::new(AtomicBool::new(false)),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             position_history: Vec::new(),
@@ -405,10 +408,11 @@ impl UciEngine {
         }
         
         let history = self.position_history.clone();
+        let multi_pv = self.multi_pv.load(Ordering::Relaxed) as usize;
         
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = tokio::task::spawn_blocking(move || {
-            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, |event| {
+            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, multi_pv, |event| {
                 let _ = tx.send(event);
             })
         });
@@ -417,24 +421,33 @@ impl UciEngine {
         tokio::spawn(async move {
             let mut best_move = None;
             let mut best_depth = 0;
+            let mut pv_index = 1;
+            let mut last_depth = 0;
 
             // Receive and print search info
             while let Some(event) = rx.recv().await {
-                // Always use the move from the deepest completed search
-                if let Some(mv) = event.best_move {
-                    if event.depth >= best_depth {
-                        best_move = Some(mv);
-                        best_depth = event.depth;
+                if event.depth != last_depth {
+                    pv_index = 1;
+                    last_depth = event.depth;
+                }
+                
+                if pv_index == 1 {
+                    if let Some(mv) = event.best_move {
+                        if event.depth >= best_depth {
+                            best_move = Some(mv);
+                            best_depth = event.depth;
+                        }
                     }
                 }
+                
                 let elapsed = start_time.elapsed().as_millis() as u64;
                 
-                print!("info depth {} seldepth {} score cp {} nodes {}", 
-                    event.depth, event.seldepth, event.score, event.nodes);
+                print!("info depth {} multipv {} score cp {} nodes {}", 
+                    event.depth, pv_index, event.score, event.nodes);
                 
                 if elapsed > 0 {
                     let nps = (event.nodes as u64 * 1000) / elapsed;
-                    print!(" time {} nps {}", elapsed, nps);
+                    print!(" nps {} time {}", nps, elapsed);
                 }
                 
                 if event.pv_len > 0 {
@@ -447,6 +460,7 @@ impl UciEngine {
                 }
                 
                 println!();
+                pv_index += 1;
             }
 
             let _ = handle.await;
@@ -514,7 +528,14 @@ impl UciEngine {
                             self.handle_evalfile_export(&value);
                         }
                     }
-                    "uci_chess960" | "ponder" | "multipv" | "move overhead" | "nodestime" => {
+                    "multipv" => {
+                        if !value.is_empty() {
+                            if let Ok(pv_count) = value.parse::<u32>() {
+                                self.multi_pv.store(pv_count.max(1).min(500), Ordering::Relaxed);
+                            }
+                        }
+                    }
+                    "uci_chess960" | "ponder" | "move overhead" | "nodestime" => {
                         println!("info string Option {} not yet implemented", option_name);
                     }
                     _ => {}
