@@ -18,7 +18,8 @@ A modern chess engine written in Rust featuring embedded NNUE evaluation, openin
 - Move ordering (hash move, captures, killers, history heuristic)
 - Futility pruning and reverse futility pruning
 - Quiescence search with delta pruning
-- Multi-threaded parallel search
+- Multi-threaded parallel search (Lazy SMP)
+- **Pondering**: Think during opponent's time (competition-ready)
 
 ### Evaluation
 - **NNUE**: Neural network evaluation when loaded
@@ -129,9 +130,9 @@ The engine runs in UCI mode by default and supports standard UCI commands.
 - **Threads** (1-512): Number of search threads (default: 1)
 - **EvalFile** (string): NNUE file path or `<embedded>` (default: `<embedded>`)
 - **Book** (string): Path to Polyglot opening book file
+- **Ponder** (check): Pondering support - think during opponent's time (default: false)
+- **MultiPV** (1-500): Multiple principal variations (default: 1)
 - **UCI_Chess960** (check): Chess960 mode (not yet implemented)
-- **Ponder** (check): Pondering support (not yet implemented)
-- **MultiPV** (1-500): Multiple principal variations (not yet implemented)
 - **Move Overhead** (0-5000 ms): Time management overhead (not yet implemented)
 - **nodestime** (0-10000): Nodes per second (not yet implemented)
 
@@ -299,24 +300,11 @@ MIT License - See LICENSE file for details
 
 hedgegod
 
-## Recent Improvements (v0.3.0)
-
-- ✅ **UCI by default**: Engine starts in UCI mode automatically (use `--cli` for interactive mode)
-- ✅ **Embedded NNUE**: 72MB Stockfish 17 NNUE packed into binary, auto-loaded
-- ✅ **NNUE export**: Can export embedded network via UCI option (like Stockfish)
-- ✅ **Stockfish-like options**: Hash, Threads, EvalFile, Book, and more UCI options
-- ✅ **Responsive search**: Commands like `stop` work during `go infinite`
-- ✅ **Ultra-optimized build**: Fat LTO, single codegen unit, maximum optimization
-- ✅ **Zero warnings**: Clean compilation
-- ✅ **Single binary**: Only z-slon binary is built
-
 ## Contributing
 
 Contributions welcome! Areas for improvement:
 - Endgame tablebases (Syzygy)
 - Advanced time management
-- Pondering (thinking on opponent's time)
-- Multi-PV search
 - Lazy SMP improvements
 - Additional pruning techniques
 - UCI_Chess960 support
