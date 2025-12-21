@@ -180,10 +180,10 @@ impl UciEngine {
                     self.pondering.store(false, Ordering::SeqCst);
                     println!("info string Ponder hit - stopping search");
 
-                    // Give a tiny delay to ensure at least depth 1 completes if very early
+                    // Give a longer delay to ensure depth 2+ completes for ponder move extraction
                     let cancel_clone = Arc::clone(&self.cancel_flag);
                     tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        tokio::time::sleep(Duration::from_millis(50)).await;
                         cancel_clone.store(true, Ordering::SeqCst);
                     });
 
@@ -541,10 +541,9 @@ impl UciEngine {
                         if is_valid && event.depth >= best_depth {
                             best_move = Some(mv);
                             best_depth = event.depth;
+                            // Only update ponder_move if we have a valid one, otherwise keep the previous best
                             if event.pv_len > 1 && event.pv[0] == Some(mv) {
                                 ponder_move = event.pv[1];
-                            } else {
-                                ponder_move = None;
                             }
                         }
                     }
