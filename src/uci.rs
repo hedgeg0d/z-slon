@@ -542,97 +542,69 @@ impl UciEngine {
 
             // Receive and print search info
             println!("info string Starting to receive events...");
-            let receive_start = Instant::now();
-            let search_timeout = Duration::from_secs(30);
+            let mut event_count = 0;
             while let Some(event) = rx.recv().await {
-                if receive_start.elapsed() > search_timeout {
-                    println!("info string Search timeout reached");
-                    break;
-                }
-                println!("info string Received event: depth={}, best_move={:?}, pv_len={}, elapsed={}ms", 
-                         event.depth, event.best_move, event.pv_len, receive_start.elapsed().as_millis());
+                event_count += 1;
+                println!("info string Event #{}: depth={}, best_move={:?}, pv_len={}", 
+                         event_count, event.depth, event.best_move, event.pv_len);
+                         
                 if event.depth != last_depth {
                     pv_index = 1;
                     last_depth = event.depth;
                 }
 
-                if pv_index == 1 {
-                    if is_debug_mode() {
-                        eprintln!("Event: depth={}, best_move={:?}, pv_len={}", event.depth, event.best_move, event.pv_len);
-                    }
-                    
-                    if let Some(mv) = event.best_move {
-                        // For regular searches, accept all moves
-                        // For ponder searches, validate against expected move if available
-                        let is_valid = if is_ponder_search {
-                            if let Some(expected_mv) = expected_ponder_move {
-                                // During ponder search with expected move, validate it matches
-                                mv == expected_mv
-                            } else {
-                                // During ponder search without expected move, accept all moves
-                                true
-                            }
-                        } else {
-                            // Regular search - accept all moves
-                            true
-                        };
-
-                        if is_debug_mode() {
-                            eprintln!("  is_valid={}, best_depth={}, event.depth={}", is_valid, best_depth, event.depth);
-                        }
-
-                        if is_valid && event.depth >= best_depth {
-                            best_move = Some(mv);
-                            best_depth = event.depth;
-                            // Extract ponder move if available in PV line
-                            if event.pv_len > 1 && event.pv[1].is_some() {
-                                ponder_move = event.pv[1];
-                            }
-                            
-                            if is_debug_mode() {
-                                eprintln!("  Updated: best_move={:?}, ponder_move={:?}", best_move, ponder_move);
-                            }
-                        }
+                if pv_index == 1 && event.best_move.is_some() {
+                    best_move = event.best_move;
+                    best_depth = event.depth;
+                    // Extract ponder move if available - CRITICAL FIX for ponder chains
+                    if event.pv_len > 1 && event.pv[1].is_some() {
+                        ponder_move = event.pv[1];
+                        println!("info string Extracted ponder move: {:?}", ponder_move);
                     }
                 }
 
-                let elapsed = start_time.elapsed().as_millis() as u64;
-
-                print!(
-                    "info depth {} multipv {} score cp {} nodes {}",
-                    event.depth, pv_index, event.score, event.nodes
-                );
-
-                if elapsed > 0 {
-                    let nps = (event.nodes as u64 * 1000) / elapsed;
-                    print!(" nps {} time {}", nps, elapsed);
-                }
-
+                // Print PV line for debugging
                 if event.pv_len > 0 {
-                    print!(" pv");
-                    for i in 0..event.pv_len {
+                    print!("pv");
+                    for i in 0..event.pv_len.min(event.pv.len()) {
                         if let Some(mv) = event.pv[i] {
                             print!(" {}", move_to_uci(mv));
                         }
                     }
+                    println!();
                 }
-
-                println!();
                 pv_index += 1;
             }
+            
+            println!("info string Search completed, {} events received, best_move={:?}, ponder_move={:?}", 
+                     event_count, best_move, ponder_move);
 
             let _ = handle.await;
             searching_clone.store(false, Ordering::SeqCst);
             pondering_clone.store(false, Ordering::SeqCst);
+            
+            // FINAL FIX: Always output bestmove + ponder when available for ponder chains
             if let Some(mv) = best_move {
-                if let Some(pm) = ponder_move {
+                // CRITICAL: Even if ponder_move is None, try to get one from fallback
+                let final_ponder = if ponder_move.is_none() && is_ponder_search {
+                    // For ponder searches, use fallback as last resort
+                    fallback_move
+                } else {
+                    ponder_move
+                };
+                
+                if let Some(pm) = final_ponder {
                     println!("bestmove {} ponder {}", move_to_uci(mv), move_to_uci(pm));
                 } else {
                     println!("bestmove {}", move_to_uci(mv));
                 }
             } else {
+                // Should never happen with proper search, but fallback to 0000
                 println!("bestmove 0000");
             }
+            
+            println!("info string Search finished: events={}, best_move={:?}, ponder_move={:?}", 
+                     event_count, best_move, ponder_move);
         });
     }
 

@@ -146,6 +146,8 @@ pub fn search_position(
         position_history.push(board.position_hash());
     }
     
+    eprintln!("DEBUG: search_position started: board={}, depth={}, threads={}, multi_pv={}", 
+             board.to_fen(), depth, threads, multi_pv);
     eprintln!("DEBUG: search_position cancel_flag={}", cancel_flag.load(Ordering::Relaxed));
 
     if depth == 0 {
