@@ -175,16 +175,18 @@ impl UciEngine {
                 self.cancel_flag.store(true, Ordering::SeqCst);
             }
             "ponderhit" => {
-                // Ponder hit - stop search immediately and return best move
+                // Ponder hit - allow search to complete depth >= 2 for ponder move extraction
                 if self.pondering.load(Ordering::SeqCst) && self.searching.load(Ordering::SeqCst) {
                     self.pondering.store(false, Ordering::SeqCst);
-                    println!("info string Ponder hit - stopping search");
+                    println!("info string Ponder hit - search will complete depth >= 2");
 
-                    // Give a longer delay to ensure depth 2+ completes for ponder move extraction
+                    // Give reasonable time for depth >= 2 to complete naturally
                     let cancel_clone = Arc::clone(&self.cancel_flag);
                     tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(50)).await;
-                        cancel_clone.store(true, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(150)).await;
+                        if !cancel_clone.load(Ordering::SeqCst) {
+                            cancel_clone.store(true, Ordering::SeqCst);
+                        }
                     });
 
                     // Clear stored ponder parameters
@@ -541,8 +543,8 @@ impl UciEngine {
                         if is_valid && event.depth >= best_depth {
                             best_move = Some(mv);
                             best_depth = event.depth;
-                            // Only update ponder_move if we have a valid one, otherwise keep the previous best
-                            if event.pv_len > 1 && event.pv[0] == Some(mv) {
+                            // Extract ponder move if available in PV line
+                            if event.pv_len > 1 && event.pv[1].is_some() {
                                 ponder_move = event.pv[1];
                             }
                         }
