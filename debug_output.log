@@ -1,0 +1,14 @@
+id name z-slon 0.2.0
+id author hedgegod
+option name Hash type spin default 16 min 1 max 33554432
+option name Threads type spin default 1 min 1 max 512
+option name UCI_Chess960 type check default false
+option name Ponder type check default false
+option name MultiPV type spin default 1 min 1 max 500
+option name Move Overhead type spin default 10 min 0 max 5000
+option name nodestime type spin default 0 min 0 max 10000
+option name EvalFile type string default <embedded>
+option name Book type string default <empty>
+uciok
+readyok
+info string Using NNUE evaluation: <embedded>

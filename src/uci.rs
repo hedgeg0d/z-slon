@@ -310,7 +310,7 @@ impl UciEngine {
         }
     }
 
-    async fn handle_go(&mut self, parts: &[&str]) {
+    async fn handle_go(&self, parts: &[&str]) {
         let mut is_ponder = false;
         for &part in parts.iter() {
             if part == "ponder" {
@@ -318,6 +318,7 @@ impl UciEngine {
                 break;
             }
         }
+        println!("info string handle_go called with parts: {:?}", parts);
         if !is_ponder {
             if let Some(ref book) = self.book {
                 if let Some(book_move) = book.get_best_move(&self.board) {
@@ -529,16 +530,30 @@ impl UciEngine {
                 }
 
                 if pv_index == 1 {
+                    // Debug: print event info
+                    if is_debug_mode() {
+                        eprintln!("Event: depth={}, best_move={:?}, pv_len={}", event.depth, event.best_move, event.pv_len);
+                    }
+                    
                     if let Some(mv) = event.best_move {
+                        // For regular searches, accept all moves
+                        // For ponder searches, validate against expected move if available
                         let is_valid = if is_ponder_search {
                             if let Some(expected_mv) = expected_ponder_move {
-                                true
+                                // During ponder search with expected move, validate it matches
+                                mv == expected_mv
                             } else {
-                                false
+                                // During ponder search without expected move, accept all moves
+                                true
                             }
                         } else {
+                            // Regular search - accept all moves
                             true
                         };
+
+                        if is_debug_mode() {
+                            eprintln!("  is_valid={}, best_depth={}, event.depth={}", is_valid, best_depth, event.depth);
+                        }
 
                         if is_valid && event.depth >= best_depth {
                             best_move = Some(mv);
@@ -546,6 +561,10 @@ impl UciEngine {
                             // Extract ponder move if available in PV line
                             if event.pv_len > 1 && event.pv[1].is_some() {
                                 ponder_move = event.pv[1];
+                            }
+                            
+                            if is_debug_mode() {
+                                eprintln!("  Updated: best_move={:?}, ponder_move={:?}", best_move, ponder_move);
                             }
                         }
                     }
