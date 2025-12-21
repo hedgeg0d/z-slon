@@ -1,23 +1,26 @@
+#[macro_use]
+mod output;
+
 mod board;
 mod eval;
 mod movegen;
-mod search;
-mod uci;
 mod nnue;
 mod polyglot_integration;
+mod search;
+mod uci;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use board::{Board, Piece};
+use clap::Parser;
 use eval::{evaluate, EvaluationBreakdown};
 use movegen::{apply_move, is_in_check, legal_moves, Move};
-use search::search_position;
 use nnue::NnueEvaluator;
-use tokio::sync::mpsc;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
-use clap::Parser;
+use search::search_position;
+use tokio::sync::mpsc;
 
 #[derive(Parser, Debug)]
 #[command(name = "z-slon")]
@@ -26,19 +29,19 @@ struct Args {
     /// Enable CLI mode (default is UCI mode)
     #[arg(long)]
     cli: bool,
-    
+
     /// Path to NNUE file
     #[arg(long)]
     nnue: Option<String>,
-    
+
     /// Path to Polyglot book file
     #[arg(long)]
     book: Option<String>,
-    
+
     /// Number of threads
     #[arg(long, default_value_t = 1)]
     threads: u32,
-    
+
     /// Enable debug output
     #[arg(long)]
     debug: bool,
@@ -93,10 +96,10 @@ impl EngineState {
 async fn main() {
     // Parse command line arguments
     let args = Args::parse();
-    
+
     // Set debug mode
     set_debug_mode(args.debug);
-    
+
     // Initialize NNUE evaluator
     let nnue_evaluator = NnueEvaluator::new();
     if let Some(nnue_path) = &args.nnue {
@@ -109,7 +112,7 @@ async fn main() {
             Err(e) => eprintln!("Failed to load NNUE: {}", e),
         }
     }
-    
+
     // Default mode is UCI, unless --cli flag is provided
     if !args.cli {
         let mut uci_engine = uci::UciEngine::new_with_nnue(nnue_evaluator);
@@ -122,13 +125,15 @@ async fn main() {
     }
 
     let state = Arc::new(EngineState::new(6, args.threads, nnue_evaluator));
-    let board = Arc::new(tokio::sync::RwLock::new(Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")));
+    let board = Arc::new(tokio::sync::RwLock::new(Board::from_fen(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    )));
     let eval_running = Arc::new(AtomicBool::new(false));
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let position_changed = Arc::new(AtomicBool::new(false));
-    
+
     eprintln!("Welcome to z-slon! Type commands (`set`, `show`, `move`, `eval`, `start`, `stop`, `exit`).");
-    
+
     // Print NNUE status
     if is_debug_mode() {
         let nnue_guard = state.nnue.read().await;
@@ -140,9 +145,9 @@ async fn main() {
             eprintln!("Using HCE (Hand-Crafted Evaluation)");
         }
     }
-    
+
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
-    
+
     // Spawn input reader task with rustyline
     let input_handle = tokio::task::spawn_blocking(move || {
         let mut rl = DefaultEditor::new().unwrap();
@@ -165,7 +170,7 @@ async fn main() {
             }
         }
     });
-    
+
     // Main command processing loop
     while let Some(command) = cmd_rx.recv().await {
         if command.eq_ignore_ascii_case("exit") || command.eq_ignore_ascii_case("quit") {
@@ -173,8 +178,17 @@ async fn main() {
             eval_running.store(false, Ordering::SeqCst);
             break;
         }
-        
-        match handle_command(&command, Arc::clone(&board), Arc::clone(&state), Arc::clone(&eval_running), Arc::clone(&cancel_flag), Arc::clone(&position_changed)).await {
+
+        match handle_command(
+            &command,
+            Arc::clone(&board),
+            Arc::clone(&state),
+            Arc::clone(&eval_running),
+            Arc::clone(&cancel_flag),
+            Arc::clone(&position_changed),
+        )
+        .await
+        {
             Ok(should_continue) => {
                 if !should_continue {
                     cancel_flag.store(true, Ordering::SeqCst);
@@ -187,7 +201,7 @@ async fn main() {
             }
         }
     }
-    
+
     input_handle.abort();
 }
 
@@ -205,17 +219,53 @@ async fn handle_command(
         .ok_or_else(|| "Empty command".to_string())?
         .to_lowercase();
     match cmd.as_str() {
-        "set" => handle_set_command(parts, Arc::clone(&board), Arc::clone(&state), Arc::clone(&position_changed), Arc::clone(&cancel_flag)).await,
-        "show" => handle_show_command(parts, Arc::clone(&board)).await.map(|_| true),
+        "set" => {
+            handle_set_command(
+                parts,
+                Arc::clone(&board),
+                Arc::clone(&state),
+                Arc::clone(&position_changed),
+                Arc::clone(&cancel_flag),
+            )
+            .await
+        }
+        "show" => handle_show_command(parts, Arc::clone(&board))
+            .await
+            .map(|_| true),
         "eval" => handle_eval_command(Arc::clone(&board)).await,
-        "start" => handle_start_command(parts, Arc::clone(&board), Arc::clone(&state), Arc::clone(&eval_running), Arc::clone(&cancel_flag), Arc::clone(&position_changed)).await,
+        "start" => {
+            handle_start_command(
+                parts,
+                Arc::clone(&board),
+                Arc::clone(&state),
+                Arc::clone(&eval_running),
+                Arc::clone(&cancel_flag),
+                Arc::clone(&position_changed),
+            )
+            .await
+        }
         "stop" => handle_stop_command(Arc::clone(&eval_running), Arc::clone(&cancel_flag)).await,
-        "move" => handle_move_command(parts, Arc::clone(&board), Arc::clone(&state), Arc::clone(&position_changed), Arc::clone(&cancel_flag)).await,
+        "move" => {
+            handle_move_command(
+                parts,
+                Arc::clone(&board),
+                Arc::clone(&state),
+                Arc::clone(&position_changed),
+                Arc::clone(&cancel_flag),
+            )
+            .await
+        }
         _ => Err(format!("Unknown command: {}", cmd)),
     }
 }
 
-async fn handle_set_command<'a, I>(mut parts: I, board: Arc<tokio::sync::RwLock<Board>>, state: Arc<EngineState>, position_changed: Arc<AtomicBool>, cancel_flag: Arc<AtomicBool>) -> Result<bool, String>
+async fn handle_set_command<'a, I>(
+    mut parts: I,
+    board: Arc<tokio::sync::RwLock<Board>>,
+    state: Arc<EngineState>,
+    position_changed: Arc<AtomicBool>,
+    cancel_flag: Arc<AtomicBool>,
+) -> Result<bool, String>
 where
     I: Iterator<Item = &'a str>,
 {
@@ -246,7 +296,9 @@ where
             let value = parts
                 .next()
                 .ok_or_else(|| "Usage: set depth <1-100>".to_string())?;
-            let depth: u32 = value.parse().map_err(|_| "Depth must be a number".to_string())?;
+            let depth: u32 = value
+                .parse()
+                .map_err(|_| "Depth must be a number".to_string())?;
             if depth < 1 || depth > 100 {
                 return Err("Depth range is 1..=100".to_string());
             }
@@ -258,7 +310,9 @@ where
             let value = parts
                 .next()
                 .ok_or_else(|| "Usage: set threads <1-64>".to_string())?;
-            let threads: u32 = value.parse().map_err(|_| "Threads must be a number".to_string())?;
+            let threads: u32 = value
+                .parse()
+                .map_err(|_| "Threads must be a number".to_string())?;
             if threads < 1 || threads > 64 {
                 return Err("Threads range is 1..=64".to_string());
             }
@@ -270,7 +324,10 @@ where
     }
 }
 
-async fn handle_show_command<'a, I>(mut parts: I, board: Arc<tokio::sync::RwLock<Board>>) -> Result<(), String>
+async fn handle_show_command<'a, I>(
+    mut parts: I,
+    board: Arc<tokio::sync::RwLock<Board>>,
+) -> Result<(), String>
 where
     I: Iterator<Item = &'a str>,
 {
@@ -328,7 +385,7 @@ where
             eval_running.store(true, Ordering::SeqCst);
             cancel_flag.store(false, Ordering::SeqCst);
             position_changed.store(false, Ordering::SeqCst);
-            
+
             tokio::spawn(run_continuous_search(
                 Arc::clone(&board),
                 Arc::clone(&state),
@@ -342,7 +399,10 @@ where
     }
 }
 
-async fn handle_stop_command(eval_running: Arc<AtomicBool>, cancel_flag: Arc<AtomicBool>) -> Result<bool, String> {
+async fn handle_stop_command(
+    eval_running: Arc<AtomicBool>,
+    cancel_flag: Arc<AtomicBool>,
+) -> Result<bool, String> {
     if !eval_running.load(Ordering::SeqCst) {
         return Err("Eval is not running".to_string());
     }
@@ -366,7 +426,7 @@ where
     if notation.is_empty() {
         return Err("Usage: move <algebraic>".to_string());
     }
-    
+
     let mut board_guard = board.write().await;
     let legal = legal_moves(&*board_guard);
     if legal.is_empty() {
@@ -377,19 +437,19 @@ where
     apply_move(&mut *board_guard, mv);
     let hash_after = board_guard.position_hash();
     drop(board_guard);
-    
+
     // Add the hashes to history
     {
         let mut hist = state.position_history.write().await;
         hist.push(hash_before);
         hist.push(hash_after);
     }
-    
+
     // Cancel current search and signal position change to restart eval immediately
     cancel_flag.store(true, Ordering::SeqCst);
     position_changed.store(true, Ordering::SeqCst);
     eprintln!("Move {} applied.", mv);
-    
+
     Ok(true)
 }
 
@@ -472,8 +532,16 @@ fn promotion_piece(ch: char, white: bool) -> Result<Piece, String> {
     match ch {
         'q' | 'Q' => Ok(if white { Piece::WQueen } else { Piece::BQueen }),
         'r' | 'R' => Ok(if white { Piece::WRook } else { Piece::BRook }),
-        'b' | 'B' => Ok(if white { Piece::WBishop } else { Piece::BBishop }),
-        'n' | 'N' => Ok(if white { Piece::WKnight } else { Piece::BKnight }),
+        'b' | 'B' => Ok(if white {
+            Piece::WBishop
+        } else {
+            Piece::BBishop
+        }),
+        'n' | 'N' => Ok(if white {
+            Piece::WKnight
+        } else {
+            Piece::BKnight
+        }),
         _ => Err("Unsupported promotion piece".to_string()),
     }
 }
@@ -486,7 +554,11 @@ fn print_moves_list(moves: &[Move]) {
 }
 
 fn print_full_info(board: &Board, moves: &[Move]) {
-    let side = if board.is_white_to_move() { "White" } else { "Black" };
+    let side = if board.is_white_to_move() {
+        "White"
+    } else {
+        "Black"
+    };
     println!("Side to move: {}", side);
     if is_in_check(board, board.is_white_to_move()) {
         println!("Check: {} to move is in check", side);
@@ -509,7 +581,11 @@ fn print_full_info(board: &Board, moves: &[Move]) {
 
 fn format_en_passant(board: &Board) -> String {
     match board.en_passant_file() {
-        Some(file) => format!("{}{}", (b'a' + file) as char, if board.is_white_to_move() { '6' } else { '3' }),
+        Some(file) => format!(
+            "{}{}",
+            (b'a' + file) as char,
+            if board.is_white_to_move() { '6' } else { '3' }
+        ),
         None => "-".to_string(),
     }
 }
@@ -572,21 +648,21 @@ async fn run_continuous_search(
         if !eval_running.load(Ordering::SeqCst) {
             break;
         }
-        
+
         // Reset position changed flag and cancel flag
         position_changed.store(false, Ordering::SeqCst);
         cancel_flag.store(false, Ordering::SeqCst);
-        
+
         let history = {
             let hist_guard = state.position_history.read().await;
             hist_guard.clone()
         };
-        
+
         let board_clone = {
             let board_guard = board.read().await;
             board_guard.clone()
         };
-        
+
         let depth = state.depth();
         let threads = state.threads();
         let cancel_clone = Arc::clone(&cancel_flag);
@@ -598,12 +674,21 @@ async fn run_continuous_search(
                 None
             }
         };
-        
+
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = tokio::task::spawn_blocking(move || {
-            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, 1, |event| {
-                let _ = tx.send(event);
-            })
+            search_position(
+                board_clone,
+                depth,
+                threads,
+                history,
+                cancel_clone,
+                nnue_clone,
+                1,
+                |event| {
+                    let _ = tx.send(event);
+                },
+            )
         });
 
         // Print search progress
@@ -618,17 +703,17 @@ async fn run_continuous_search(
         }
 
         let _ = handle.await;
-        
+
         // Check if we should stop
         if !eval_running.load(Ordering::SeqCst) {
             break;
         }
-        
+
         // If cancelled by stop command, exit
         if cancel_flag.load(Ordering::SeqCst) && !position_changed.load(Ordering::SeqCst) {
             break;
         }
-        
+
         // If we reached max depth without being cancelled, print full evaluation
         if last_depth == depth && !cancel_flag.load(Ordering::SeqCst) {
             let board_guard = board.read().await;
@@ -636,14 +721,13 @@ async fn run_continuous_search(
             drop(board_guard);
             print_evaluation(&breakdown);
         }
-        
+
         // If we reached max depth, wait for position change
         while eval_running.load(Ordering::SeqCst) && !position_changed.load(Ordering::SeqCst) {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 }
-
 
 fn move_to_uci(mv: Move) -> String {
     let files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];

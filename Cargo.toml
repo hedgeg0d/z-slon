@@ -21,3 +21,4 @@ clap = { version = "4", features = ["derive"] }
 timecat = { version = "1.49", features = ["inbuilt_nnue"] }
 polyglot-book-rs = "0.1.0"
 lazy_static = "1.5"
+

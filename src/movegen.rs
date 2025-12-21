@@ -105,8 +105,8 @@ pub fn apply_move(board: &mut Board, mv: Move) {
 
     if is_castling {
         let (rook_from, rook_to) = match mv.to {
-            6 => (7, 5),   // White king-side
-            2 => (0, 3),   // White queen-side
+            6 => (7, 5),    // White king-side
+            2 => (0, 3),    // White queen-side
             62 => (63, 61), // Black king-side
             58 => (56, 59), // Black queen-side
             _ => unreachable!("Invalid castling move destination"),
@@ -152,7 +152,13 @@ fn piece_to_index(piece: Piece) -> Option<usize> {
     }
 }
 
-fn update_castling_rights(board: &mut Board, moving_piece: Piece, from: u8, to: u8, captured: Piece) {
+fn update_castling_rights(
+    board: &mut Board,
+    moving_piece: Piece,
+    from: u8,
+    to: u8,
+    captured: Piece,
+) {
     match moving_piece {
         Piece::WKing => board.castling &= !(1 | 2),
         Piece::BKing => board.castling &= !(4 | 8),
@@ -453,7 +459,12 @@ fn generate_king_moves(board: &Board, white: bool) -> Vec<Move> {
     moves
 }
 
-fn generate_sliding_moves(board: &Board, white: bool, piece_idx: usize, directions: &[(i8, i8)]) -> Vec<Move> {
+fn generate_sliding_moves(
+    board: &Board,
+    white: bool,
+    piece_idx: usize,
+    directions: &[(i8, i8)],
+) -> Vec<Move> {
     let mut moves = Vec::new();
     let pieces = board.pieces[piece_idx];
     let own_pieces = if white {
@@ -555,7 +566,13 @@ fn is_square_attacked(board: &Board, sq: u8, by_white: bool) -> bool {
         if from_rank >= 0 && from_rank < 8 && from_file >= 0 && from_file < 8 {
             let from = (from_rank * 8 + from_file) as u8;
             let piece = board.square(from);
-            if piece == (if by_white { Piece::WKnight } else { Piece::BKnight }) {
+            if piece
+                == (if by_white {
+                    Piece::WKnight
+                } else {
+                    Piece::BKnight
+                })
+            {
                 return true;
             }
         }
@@ -591,8 +608,18 @@ fn is_square_attacked(board: &Board, sq: u8, by_white: bool) -> bool {
             let from = (r * 8 + f) as u8;
             if (all_pieces & (1u64 << from)) != 0 {
                 let piece = board.square(from);
-                if piece == (if by_white { Piece::WBishop } else { Piece::BBishop })
-                    || piece == (if by_white { Piece::WQueen } else { Piece::BQueen })
+                if piece
+                    == (if by_white {
+                        Piece::WBishop
+                    } else {
+                        Piece::BBishop
+                    })
+                    || piece
+                        == (if by_white {
+                            Piece::WQueen
+                        } else {
+                            Piece::BQueen
+                        })
                 {
                     return true;
                 }
@@ -612,7 +639,12 @@ fn is_square_attacked(board: &Board, sq: u8, by_white: bool) -> bool {
             if (all_pieces & (1u64 << from)) != 0 {
                 let piece = board.square(from);
                 if piece == (if by_white { Piece::WRook } else { Piece::BRook })
-                    || piece == (if by_white { Piece::WQueen } else { Piece::BQueen })
+                    || piece
+                        == (if by_white {
+                            Piece::WQueen
+                        } else {
+                            Piece::BQueen
+                        })
                 {
                     return true;
                 }
