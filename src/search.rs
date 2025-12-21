@@ -145,6 +145,8 @@ pub fn search_position(
     if position_history.is_empty() || position_history.last() != Some(&board.position_hash()) {
         position_history.push(board.position_hash());
     }
+    
+    eprintln!("DEBUG: search_position cancel_flag={}", cancel_flag.load(Ordering::Relaxed));
 
     if depth == 0 {
         let event = SearchEvent {
@@ -156,9 +158,12 @@ pub fn search_position(
             pv: [None; 32],
             pv_len: 0,
         };
+        eprintln!("DEBUG: search_position depth=0, sending event");
         on_progress(event);
         return;
     }
+    
+    eprintln!("DEBUG: search_position starting search, depth={}", depth);
 
     // Shared state for best result across all threads
     let best_result = Arc::new(Mutex::new((None, 0, [None; 32])));
@@ -205,6 +210,8 @@ fn search_single_thread(
     multi_pv: usize,
     on_progress: &mut impl FnMut(SearchEvent),
 ) {
+    eprintln!("DEBUG: search_single_thread started, depth={}, multi_pv={}, cancel_flag={}", 
+             depth, multi_pv, cancel_flag.load(Ordering::Relaxed));
     let mut prev_scores = vec![0; multi_pv];
     let mut tables = SearchTables::new();
 
@@ -232,6 +239,8 @@ fn search_single_thread(
             );
 
             let was_cancelled = cancel_flag.load(Ordering::Relaxed);
+            
+            eprintln!("DEBUG: depth={} was_cancelled={} depth_move={:?}", current_depth, was_cancelled, depth_move);
 
             if !was_cancelled && depth_move.is_some() {
                 if pv_idx < prev_scores.len() {
@@ -247,6 +256,7 @@ fn search_single_thread(
                     pv,
                     pv_len: pv.iter().take_while(|m| m.is_some()).count(),
                 };
+                eprintln!("DEBUG: Sending event at depth {}, best_move={:?}", current_depth, depth_move);
                 on_progress(event);
 
                 if let Some(mv) = depth_move {

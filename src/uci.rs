@@ -8,6 +8,7 @@ use crate::movegen::{apply_move, legal_moves, Move};
 use crate::nnue::NnueEvaluator;
 use crate::polyglot_integration::OptimizedPolyglotBook;
 use crate::search::search_position;
+use crate::is_debug_mode;
 use tokio::sync::mpsc;
 
 pub struct UciEngine {
@@ -310,7 +311,7 @@ impl UciEngine {
         }
     }
 
-    async fn handle_go(&self, parts: &[&str]) {
+    async fn handle_go(&mut self, parts: &[&str]) {
         let mut is_ponder = false;
         for &part in parts.iter() {
             if part == "ponder" {
@@ -454,8 +455,9 @@ impl UciEngine {
         };
 
         self.searching.store(true, Ordering::SeqCst);
-        self.cancel_flag.store(false, Ordering::SeqCst);
+        let old_cancel = self.cancel_flag.swap(false, Ordering::SeqCst);
         self.pondering.store(is_ponder, Ordering::SeqCst);
+        println!("info string Cancel flag reset from {} to false", old_cancel);
 
         let board_clone = self.board.clone();
         let threads = self.threads.load(Ordering::SeqCst);
@@ -496,6 +498,7 @@ impl UciEngine {
         let multi_pv = self.multi_pv.load(Ordering::Relaxed) as usize;
 
         let (tx, mut rx) = mpsc::unbounded_channel();
+        println!("info string About to call search_position, cancel_flag={}", cancel_clone.load(Ordering::Relaxed));
         let handle = tokio::task::spawn_blocking(move || {
             search_position(
                 board_clone,
@@ -515,7 +518,9 @@ impl UciEngine {
         let pondering_clone = Arc::clone(&self.pondering);
         let expected_ponder_move = self.expected_ponder_move;
         let is_ponder_search = is_ponder;
+        println!("info string Spawning search task with is_ponder_search={}", is_ponder_search);
         tokio::spawn(async move {
+            println!("info string Search task started");
             let mut best_move = fallback_move; // Start with a legal move
             let mut ponder_move = None;
             let mut best_depth = 0;
@@ -523,14 +528,15 @@ impl UciEngine {
             let mut last_depth = 0;
 
             // Receive and print search info
+            println!("info string Starting to receive events...");
             while let Some(event) = rx.recv().await {
+                println!("info string Received event: depth={}, best_move={:?}, pv_len={}", event.depth, event.best_move, event.pv_len);
                 if event.depth != last_depth {
                     pv_index = 1;
                     last_depth = event.depth;
                 }
 
                 if pv_index == 1 {
-                    // Debug: print event info
                     if is_debug_mode() {
                         eprintln!("Event: depth={}, best_move={:?}, pv_len={}", event.depth, event.best_move, event.pv_len);
                     }
