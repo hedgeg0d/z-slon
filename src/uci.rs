@@ -461,13 +461,26 @@ impl UciEngine {
 
         let board_clone = self.board.clone();
         let threads = self.threads.load(Ordering::SeqCst);
-        let cancel_clone = Arc::clone(&self.cancel_flag);
+        
+        // Create a new cancel flag for this search to avoid any stale state
+        let search_cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_clone = Arc::clone(&search_cancel_flag);
         let searching_clone = Arc::clone(&self.searching);
 
         let start_time = Instant::now();
 
+        // Add a small timeout for regular searches to ensure they complete
+        if !is_ponder && movetime.is_none() {
+            let cancel_for_time = Arc::clone(&search_cancel_flag);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(1000)).await; // 1 second max for testing
+                cancel_for_time.store(true, Ordering::SeqCst);
+            });
+        }
+
         if let Some(mt) = movetime {
-            let cancel_for_time = Arc::clone(&self.cancel_flag);
+            eprintln!("DEBUG: Setting movetime timeout of {}ms", mt);
+            let cancel_for_time = Arc::clone(&search_cancel_flag);
             let pondering_for_time = Arc::clone(&self.pondering);
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(mt)).await;
@@ -529,8 +542,15 @@ impl UciEngine {
 
             // Receive and print search info
             println!("info string Starting to receive events...");
+            let receive_start = Instant::now();
+            let search_timeout = Duration::from_secs(30);
             while let Some(event) = rx.recv().await {
-                println!("info string Received event: depth={}, best_move={:?}, pv_len={}", event.depth, event.best_move, event.pv_len);
+                if receive_start.elapsed() > search_timeout {
+                    println!("info string Search timeout reached");
+                    break;
+                }
+                println!("info string Received event: depth={}, best_move={:?}, pv_len={}, elapsed={}ms", 
+                         event.depth, event.best_move, event.pv_len, receive_start.elapsed().as_millis());
                 if event.depth != last_depth {
                     pv_index = 1;
                     last_depth = event.depth;
