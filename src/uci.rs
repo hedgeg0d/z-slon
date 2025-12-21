@@ -26,6 +26,7 @@ pub struct UciEngine {
     expected_ponder_move: Option<Move>, // The move we're pondering on (opponent's expected move)
     position_history: Vec<u64>,
     current_search_result: Arc<Mutex<Option<(Option<Move>, Option<Move>)>>>, // (best_move, ponder_move)
+    pending_ponder_search: Option<(Option<Move>, Option<u64>, Option<u64>, Option<u64>)>, // (ponder_move, wtime, btime, movetime)
     nnue: NnueEvaluator,
     book: Option<OptimizedPolyglotBook>,
     nnue_file: Option<String>,
@@ -53,6 +54,7 @@ impl UciEngine {
             nnue_file: None,
             current_search_result: Arc::new(Mutex::new(None)),
             ponderhit_occurred: Arc::new(AtomicBool::new(false)),
+            pending_ponder_search: None,
         }
     }
     
@@ -76,6 +78,7 @@ impl UciEngine {
             nnue_file: None,
             current_search_result: Arc::new(Mutex::new(None)),
             ponderhit_occurred: Arc::new(AtomicBool::new(false)),
+            pending_ponder_search: None,
         }
     }
     
@@ -171,7 +174,17 @@ impl UciEngine {
                 self.clear_position_history();
             }
             "position" => {
+                // Cancel any ongoing search when position changes
+                self.cancel_flag.store(true, Ordering::SeqCst);
+                self.pondering.store(false, Ordering::SeqCst);
                 self.handle_position(&parts[1..]);
+                
+                // If we have a pending ponder search, start it now that position is updated
+                if let Some((ponder_move, wtime, btime, movetime)) = self.pending_ponder_search.take() {
+                    if let Some(pm) = ponder_move {
+                        self.start_ponder_search(wtime, btime, movetime).await;
+                    }
+                }
             }
             "go" => {
                 self.handle_go(&parts[1..]).await;
@@ -341,30 +354,21 @@ impl UciEngine {
         self.ponder_start_time = None;
         
         // Start new ponder search if we have a ponder move
-        // When ponderhit occurs, the opponent has played the move we were pondering on.
-        // The board should already be updated (via position command), but for continuous
-        // pondering, we apply our best move and then start pondering on the new ponder move.
+        // IMPORTANT: Don't apply moves here! The GUI will send a 'position' command
+        // that updates the board. We should wait for that and then start the ponder search.
+        // This prevents race conditions where we apply moves but the GUI sends different moves.
         if let Some(pm) = ponder_move {
-            // Apply our best move to the board (for continuous pondering)
-            if let Some(bm) = best_move {
-                apply_move(&mut self.board, bm);
-                self.update_position_history();
-            }
+            // Store the ponder move and time parameters for when position is updated
+            self.pending_ponder_search = Some((Some(pm), saved_ponder_params.map(|p| p.0).flatten(), 
+                                                      saved_ponder_params.map(|p| p.1).flatten(),
+                                                      saved_ponder_params.map(|p| p.2).flatten()));
             
             // Set the expected ponder move for the new search (the move we expect opponent to play)
             self.expected_ponder_move = Some(pm);
-            
-            // Reset ponderhit flag for new search
-            self.ponderhit_occurred.store(false, Ordering::SeqCst);
-            
-            // Start new ponder search
-            if let Some((wtime, btime, movetime)) = saved_ponder_params {
-                self.start_ponder_search(wtime, btime, movetime).await;
-            }
-        } else {
-            // Reset ponderhit flag
-            self.ponderhit_occurred.store(false, Ordering::SeqCst);
         }
+        
+        // Reset ponderhit flag
+        self.ponderhit_occurred.store(false, Ordering::SeqCst);
     }
     
     async fn start_ponder_search(&mut self, wtime: Option<u64>, btime: Option<u64>, movetime: Option<u64>) {
