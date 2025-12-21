@@ -1,5 +1,5 @@
-use std::sync::{Arc, RwLock};
 use crate::board::Board;
+use std::sync::{Arc, RwLock};
 use timecat::evaluate::EvaluatorNNUE;
 use timecat::Board as TimecatBoard;
 
@@ -18,7 +18,7 @@ impl NnueEvaluator {
             path: Arc::new(RwLock::new(Some("<embedded>".to_string()))),
         }
     }
-    
+
     #[allow(dead_code)]
     pub fn new_disabled() -> Self {
         Self {
@@ -46,18 +46,17 @@ impl NnueEvaluator {
         if !self.is_loaded() {
             return None;
         }
-        
+
         // Convert our board to timecat board via FEN
         let fen = board.to_fen();
-        let timecat_board = TimecatBoard::from_fen(&fen)
-            .map_err(|_| ()).ok()?;
-        
+        let timecat_board = TimecatBoard::from_fen(&fen).map_err(|_| ()).ok()?;
+
         // Create position from board
         let position = timecat_board.get_position();
-        
+
         // Evaluate using NNUE (returns i16, convert to i32)
         let score = EvaluatorNNUE::slow_evaluate(position) as i32;
-        
+
         Some(score)
     }
 

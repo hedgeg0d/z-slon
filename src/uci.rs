@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 
 use crate::board::Board;
 use crate::movegen::{apply_move, legal_moves, Move};
-use crate::search::search_position;
 use crate::nnue::NnueEvaluator;
 use crate::polyglot_integration::OptimizedPolyglotBook;
+use crate::search::search_position;
 use tokio::sync::mpsc;
 
 pub struct UciEngine {
@@ -51,7 +51,7 @@ impl UciEngine {
             nnue_file: None,
         }
     }
-    
+
     pub fn new_with_nnue(nnue: NnueEvaluator) -> Self {
         Self {
             board: Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
@@ -72,11 +72,11 @@ impl UciEngine {
             nnue_file: None,
         }
     }
-    
+
     pub fn set_threads(&mut self, threads: u32) {
         self.threads.store(threads.clamp(1, 64), Ordering::SeqCst);
     }
-    
+
     pub fn load_book(&mut self, path: &str) {
         match OptimizedPolyglotBook::load(path) {
             Ok(book) => {
@@ -96,24 +96,24 @@ impl UciEngine {
             }
         }
     }
-    
+
     fn is_draw_by_repetition(&self) -> bool {
         let hash = self.board.position_hash();
         self.position_history.iter().filter(|&&h| h == hash).count() >= 2
     }
-    
+
     fn update_position_history(&mut self) {
         let hash = self.board.position_hash();
         self.position_history.push(hash);
     }
-    
+
     fn clear_position_history(&mut self) {
         self.position_history.clear();
     }
 
     pub async fn run(&mut self) {
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        
+
         // Spawn input reader task
         tokio::spawn(async move {
             let stdin = io::stdin();
@@ -161,7 +161,8 @@ impl UciEngine {
                 println!("readyok");
             }
             "ucinewgame" => {
-                self.board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+                self.board =
+                    Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
                 self.clear_position_history();
             }
             "position" => {
@@ -178,14 +179,14 @@ impl UciEngine {
                 if self.pondering.load(Ordering::SeqCst) && self.searching.load(Ordering::SeqCst) {
                     self.pondering.store(false, Ordering::SeqCst);
                     println!("info string Ponder hit - stopping search");
-                    
+
                     // Give a tiny delay to ensure at least depth 1 completes if very early
                     let cancel_clone = Arc::clone(&self.cancel_flag);
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(10)).await;
                         cancel_clone.store(true, Ordering::SeqCst);
                     });
-                    
+
                     // Clear stored ponder parameters
                     self.ponder_time_params = None;
                     self.ponder_start_time = None;
@@ -215,10 +216,11 @@ impl UciEngine {
 
         let mut idx = 0;
         let mut last_move = None;
-        
+
         // Parse position
         if parts[idx] == "startpos" {
-            self.board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+            self.board =
+                Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
             self.clear_position_history();
             idx += 1;
         } else if parts[idx] == "fen" {
@@ -249,7 +251,7 @@ impl UciEngine {
                 idx += 1;
             }
         }
-        
+
         // Store the last move as the expected ponder move (for validation during pondering)
         self.expected_ponder_move = last_move;
     }
@@ -280,7 +282,8 @@ impl UciEngine {
         };
 
         let legal = legal_moves(&self.board);
-        legal.iter()
+        legal
+            .iter()
             .find(|m| m.from == from && m.to == to && m.promotion == promotion)
             .copied()
     }
@@ -291,8 +294,16 @@ impl UciEngine {
         match ch {
             'q' => Some(if white { Piece::WQueen } else { Piece::BQueen }),
             'r' => Some(if white { Piece::WRook } else { Piece::BRook }),
-            'b' => Some(if white { Piece::WBishop } else { Piece::BBishop }),
-            'n' => Some(if white { Piece::WKnight } else { Piece::BKnight }),
+            'b' => Some(if white {
+                Piece::WBishop
+            } else {
+                Piece::BBishop
+            }),
+            'n' => Some(if white {
+                Piece::WKnight
+            } else {
+                Piece::BKnight
+            }),
             _ => None,
         }
     }
@@ -403,7 +414,11 @@ impl UciEngine {
             }
         }
         if movetime.is_none() && !is_ponder {
-            let our_time = if self.board.is_white_to_move() { wtime } else { btime };
+            let our_time = if self.board.is_white_to_move() {
+                wtime
+            } else {
+                btime
+            };
             if let Some(time_left) = our_time {
                 // Simple time management: use 1/30 of remaining time
                 // This is a basic heuristic, more sophisticated time management can be added
@@ -412,7 +427,7 @@ impl UciEngine {
                 depth = 100; // Search deep but stop on time
             }
         }
-        
+
         if is_ponder {
             self.ponder_time_params = Some((wtime, btime, movetime));
             self.ponder_start_time = Some(Instant::now());
@@ -462,7 +477,7 @@ impl UciEngine {
         } else {
             None
         };
-        
+
         // Print evaluation mode info
         if self.nnue.is_loaded() {
             if let Some(path) = self.nnue.path() {
@@ -473,15 +488,24 @@ impl UciEngine {
         } else {
             println!("info string Using HCE evaluation");
         }
-        
+
         let history = self.position_history.clone();
         let multi_pv = self.multi_pv.load(Ordering::Relaxed) as usize;
-        
+
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = tokio::task::spawn_blocking(move || {
-            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, multi_pv, |event| {
-                let _ = tx.send(event);
-            })
+            search_position(
+                board_clone,
+                depth,
+                threads,
+                history,
+                cancel_clone,
+                nnue_clone,
+                multi_pv,
+                |event| {
+                    let _ = tx.send(event);
+                },
+            )
         });
 
         // Spawn search task that runs independently
@@ -501,7 +525,7 @@ impl UciEngine {
                     pv_index = 1;
                     last_depth = event.depth;
                 }
-                
+
                 if pv_index == 1 {
                     if let Some(mv) = event.best_move {
                         let is_valid = if is_ponder_search {
@@ -513,11 +537,11 @@ impl UciEngine {
                         } else {
                             true
                         };
-                        
+
                         if is_valid && event.depth >= best_depth {
                             best_move = Some(mv);
                             best_depth = event.depth;
-                            if !is_ponder_search && event.pv_len > 1 && event.pv[0] == Some(mv) {
+                            if event.pv_len > 1 && event.pv[0] == Some(mv) {
                                 ponder_move = event.pv[1];
                             } else {
                                 ponder_move = None;
@@ -525,17 +549,19 @@ impl UciEngine {
                         }
                     }
                 }
-                
+
                 let elapsed = start_time.elapsed().as_millis() as u64;
-                
-                print!("info depth {} multipv {} score cp {} nodes {}", 
-                    event.depth, pv_index, event.score, event.nodes);
-                
+
+                print!(
+                    "info depth {} multipv {} score cp {} nodes {}",
+                    event.depth, pv_index, event.score, event.nodes
+                );
+
                 if elapsed > 0 {
                     let nps = (event.nodes as u64 * 1000) / elapsed;
                     print!(" nps {} time {}", nps, elapsed);
                 }
-                
+
                 if event.pv_len > 0 {
                     print!(" pv");
                     for i in 0..event.pv_len {
@@ -544,7 +570,7 @@ impl UciEngine {
                         }
                     }
                 }
-                
+
                 println!();
                 pv_index += 1;
             }
@@ -573,7 +599,7 @@ impl UciEngine {
         let name_start = 1;
         let mut name_end = name_start;
         let mut value_start = None;
-        
+
         for (i, &part) in parts.iter().enumerate().skip(name_start) {
             if part == "value" {
                 name_end = i;
@@ -581,17 +607,17 @@ impl UciEngine {
                 break;
             }
         }
-        
+
         if name_end == name_start {
             name_end = parts.len();
         }
-        
+
         let option_name = parts[name_start..name_end].join(" ").to_lowercase();
-        
+
         if let Some(value_idx) = value_start {
             if value_idx < parts.len() {
                 let value = parts[value_idx..].join(" ");
-                
+
                 match option_name.as_str() {
                     "threads" => {
                         if let Ok(t) = value.parse::<u32>() {
@@ -620,14 +646,18 @@ impl UciEngine {
                     "multipv" => {
                         if !value.is_empty() {
                             if let Ok(pv_count) = value.parse::<u32>() {
-                                self.multi_pv.store(pv_count.max(1).min(500), Ordering::Relaxed);
+                                self.multi_pv
+                                    .store(pv_count.max(1).min(500), Ordering::Relaxed);
                             }
                         }
                     }
                     "ponder" => {
                         let enabled = value.to_lowercase() == "true";
                         self.ponder_enabled.store(enabled, Ordering::SeqCst);
-                        println!("info string Ponder {}", if enabled { "enabled" } else { "disabled" });
+                        println!(
+                            "info string Ponder {}",
+                            if enabled { "enabled" } else { "disabled" }
+                        );
                     }
                     "uci_chess960" | "move overhead" | "nodestime" => {
                         println!("info string Option {} not yet implemented", option_name);
@@ -637,10 +667,10 @@ impl UciEngine {
             }
         }
     }
-    
+
     fn handle_evalfile_export(&mut self, path: &str) {
         use crate::nnue::EMBEDDED_NNUE;
-        
+
         match std::fs::write(path, EMBEDDED_NNUE) {
             Ok(_) => {
                 println!("info string Exported embedded NNUE to: {}", path);
@@ -651,13 +681,13 @@ impl UciEngine {
             }
         }
     }
-    
+
     fn handle_use_nnue(&mut self, parts: &[&str]) {
         if parts.is_empty() {
             println!("info string Error: missing NNUE path");
             return;
         }
-        
+
         let path = parts.join(" ");
         match self.nnue.load(&path) {
             Ok(_) => {
@@ -679,20 +709,20 @@ impl UciEngine {
         self.clear_position_history();
         self.update_position_history();
     }
-    
+
     #[allow(dead_code)]
     pub fn get_best_move(&self, _depth: u32) -> Option<String> {
         // Placeholder - real implementation would need async support
         None
     }
-    
+
     #[allow(dead_code)]
     pub fn get_eval(&self) -> i32 {
         use crate::eval::evaluate;
         let breakdown = evaluate(&self.board);
         breakdown.total
     }
-    
+
     #[allow(dead_code)]
     pub fn apply_move_uci(&mut self, move_str: &str) -> bool {
         if let Some(mv) = self.parse_uci_move(move_str) {
@@ -703,17 +733,18 @@ impl UciEngine {
             false
         }
     }
-    
+
     #[allow(dead_code)]
     pub fn get_legal_moves(&self) -> Option<String> {
         let moves = legal_moves(&self.board);
-        let moves_str = moves.iter()
+        let moves_str = moves
+            .iter()
             .map(|m| move_to_uci(*m))
             .collect::<Vec<_>>()
             .join(",");
         Some(moves_str)
     }
-    
+
     #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
@@ -729,7 +760,7 @@ fn move_to_uci(mv: Move) -> String {
     let to_file = files[(mv.to % 8) as usize];
     let to_rank = (mv.to / 8) + 1;
     let mut s = format!("{}{}{}{}", from_file, from_rank, to_file, to_rank);
-    
+
     if let Some(promo) = mv.promotion {
         use crate::board::Piece;
         let ch = match promo {
