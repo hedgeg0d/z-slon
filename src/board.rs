@@ -1,5 +1,5 @@
-use std::fmt;
 use std::collections::hash_map::DefaultHasher;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 
 pub type Bitboard = u64;
@@ -59,7 +59,15 @@ impl Piece {
     }
 
     pub fn is_white(&self) -> bool {
-        matches!(self, Piece::WPawn | Piece::WKnight | Piece::WBishop | Piece::WRook | Piece::WQueen | Piece::WKing)
+        matches!(
+            self,
+            Piece::WPawn
+                | Piece::WKnight
+                | Piece::WBishop
+                | Piece::WRook
+                | Piece::WQueen
+                | Piece::WKing
+        )
     }
 }
 

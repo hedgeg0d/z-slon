@@ -1,13 +1,14 @@
 use std::io::{self, BufRead};
+
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::board::Board;
 use crate::movegen::{apply_move, legal_moves, Move};
-use crate::search::search_position;
 use crate::nnue::NnueEvaluator;
 use crate::polyglot_integration::OptimizedPolyglotBook;
+use crate::search::search_position;
 use tokio::sync::mpsc;
 
 pub struct UciEngine {
@@ -19,11 +20,15 @@ pub struct UciEngine {
     searching: Arc<AtomicBool>,
     cancel_flag: Arc<AtomicBool>,
     pondering: Arc<AtomicBool>,
+    ponderhit_occurred: Arc<AtomicBool>,
     ponder_enabled: AtomicBool,
     ponder_start_time: Option<Instant>,
-    ponder_time_params: Option<(Option<u64>, Option<u64>, Option<u64>)>, // (wtime, btime, movetime)
-    expected_ponder_move: Option<Move>, // The move we're pondering on (opponent's expected move)
+    ponder_time_params: Option<(Option<u64>, Option<u64>, Option<u64>)>,
+    expected_ponder_move: Option<Move>,
+    last_ponder_suggestion: Arc<Mutex<Option<Move>>>,
     position_history: Vec<u64>,
+    current_search_result: Arc<Mutex<Option<(Option<Move>, Option<Move>)>>>, // (reply_move, next_ponder_move)
+    pending_ponder_search: Option<(Option<Move>, Option<u64>, Option<u64>, Option<u64>)>, // (ponder_move, wtime, btime, movetime)
     nnue: NnueEvaluator,
     book: Option<OptimizedPolyglotBook>,
     nnue_file: Option<String>,
@@ -45,13 +50,17 @@ impl UciEngine {
             ponder_start_time: None,
             ponder_time_params: None,
             expected_ponder_move: None,
+            last_ponder_suggestion: Arc::new(Mutex::new(None)),
             position_history: Vec::new(),
             nnue: NnueEvaluator::new(),
             book: None,
             nnue_file: None,
+            current_search_result: Arc::new(Mutex::new(None)),
+            ponderhit_occurred: Arc::new(AtomicBool::new(false)),
+            pending_ponder_search: None,
         }
     }
-    
+
     pub fn new_with_nnue(nnue: NnueEvaluator) -> Self {
         Self {
             board: Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
@@ -66,55 +75,58 @@ impl UciEngine {
             ponder_start_time: None,
             ponder_time_params: None,
             expected_ponder_move: None,
+            last_ponder_suggestion: Arc::new(Mutex::new(None)),
             position_history: Vec::new(),
             nnue,
             book: None,
             nnue_file: None,
+            current_search_result: Arc::new(Mutex::new(None)),
+            ponderhit_occurred: Arc::new(AtomicBool::new(false)),
+            pending_ponder_search: None,
         }
     }
-    
+
     pub fn set_threads(&mut self, threads: u32) {
         self.threads.store(threads.clamp(1, 64), Ordering::SeqCst);
     }
-    
+
     pub fn load_book(&mut self, path: &str) {
         match OptimizedPolyglotBook::load(path) {
             Ok(book) => {
-                println!("info string Polyglot book loaded: {}", path);
+                uci_println!("info string Polyglot book loaded: {}", path);
                 let (entries, first_key, last_key) = book.debug_info();
-                println!("info string Book entries: {}", entries);
+                uci_println!("info string Book entries: {}", entries);
                 if let Some(first_key) = first_key {
-                    println!("info string First entry key: 0x{:016X}", first_key);
+                    uci_println!("info string First entry key: 0x{:016X}", first_key);
                 }
                 if let Some(last_key) = last_key {
-                    println!("info string Last entry key: 0x{:016X}", last_key);
+                    uci_println!("info string Last entry key: 0x{:016X}", last_key);
                 }
                 self.book = Some(book);
             }
             Err(e) => {
-                println!("info string Failed to load Polyglot book: {}", e);
+                uci_println!("info string Failed to load Polyglot book: {}", e);
             }
         }
     }
-    
+
     fn is_draw_by_repetition(&self) -> bool {
         let hash = self.board.position_hash();
         self.position_history.iter().filter(|&&h| h == hash).count() >= 2
     }
-    
+
     fn update_position_history(&mut self) {
         let hash = self.board.position_hash();
         self.position_history.push(hash);
     }
-    
+
     fn clear_position_history(&mut self) {
         self.position_history.clear();
     }
 
     pub async fn run(&mut self) {
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-        
-        // Spawn input reader task
+
         tokio::spawn(async move {
             let stdin = io::stdin();
             let mut lines = stdin.lock().lines();
@@ -128,7 +140,6 @@ impl UciEngine {
             }
         });
 
-        // Process commands
         while let Some(command) = rx.recv().await {
             if !self.handle_command(&command).await {
                 break;
@@ -144,28 +155,45 @@ impl UciEngine {
 
         match parts[0] {
             "uci" => {
-                println!("id name z-slon 0.2.0");
-                println!("id author hedgegod");
-                println!("option name Hash type spin default 16 min 1 max 33554432");
-                println!("option name Threads type spin default 1 min 1 max 512");
-                println!("option name UCI_Chess960 type check default false");
-                println!("option name Ponder type check default false");
-                println!("option name MultiPV type spin default 1 min 1 max 500");
-                println!("option name Move Overhead type spin default 10 min 0 max 5000");
-                println!("option name nodestime type spin default 0 min 0 max 10000");
-                println!("option name EvalFile type string default <embedded>");
-                println!("option name Book type string default <empty>");
-                println!("uciok");
+                uci_println!("id name z-slon 0.4.0");
+                uci_println!("id author hedgegod");
+                uci_println!("option name Hash type spin default 16 min 1 max 33554432");
+                uci_println!("option name Threads type spin default 1 min 1 max 512");
+                uci_println!("option name UCI_Chess960 type check default false");
+                uci_println!("option name Ponder type check default false");
+                uci_println!("option name MultiPV type spin default 1 min 1 max 500");
+                uci_println!("option name Move Overhead type spin default 10 min 0 max 5000");
+                uci_println!("option name nodestime type spin default 0 min 0 max 10000");
+                uci_println!("option name EvalFile type string default <embedded>");
+                uci_println!("option name Book type string default <empty>");
+                uci_println!("uciok");
             }
             "isready" => {
-                println!("readyok");
+                uci_println!("readyok");
             }
             "ucinewgame" => {
-                self.board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+                self.board =
+                    Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
                 self.clear_position_history();
             }
             "position" => {
+                self.cancel_flag.store(true, Ordering::SeqCst);
+                self.pondering.store(false, Ordering::SeqCst);
+
+                {
+                    let mut result = self.current_search_result.lock().unwrap();
+                    *result = None;
+                }
+
                 self.handle_position(&parts[1..]);
+
+                if let Some((ponder_move, wtime, btime, movetime)) =
+                    self.pending_ponder_search.take()
+                {
+                    if ponder_move.is_some() {
+                        self.start_ponder_search(wtime, btime, movetime).await;
+                    }
+                }
             }
             "go" => {
                 self.handle_go(&parts[1..]).await;
@@ -174,21 +202,8 @@ impl UciEngine {
                 self.cancel_flag.store(true, Ordering::SeqCst);
             }
             "ponderhit" => {
-                // Ponder hit - stop search immediately and return best move
                 if self.pondering.load(Ordering::SeqCst) && self.searching.load(Ordering::SeqCst) {
-                    self.pondering.store(false, Ordering::SeqCst);
-                    println!("info string Ponder hit - stopping search");
-                    
-                    // Give a tiny delay to ensure at least depth 1 completes if very early
-                    let cancel_clone = Arc::clone(&self.cancel_flag);
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-                        cancel_clone.store(true, Ordering::SeqCst);
-                    });
-                    
-                    // Clear stored ponder parameters
-                    self.ponder_time_params = None;
-                    self.ponder_start_time = None;
+                    self.handle_ponderhit().await;
                 }
             }
             "use" => {
@@ -215,10 +230,10 @@ impl UciEngine {
 
         let mut idx = 0;
         let mut last_move = None;
-        
-        // Parse position
+
         if parts[idx] == "startpos" {
-            self.board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+            self.board =
+                Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
             self.clear_position_history();
             idx += 1;
         } else if parts[idx] == "fen" {
@@ -233,10 +248,8 @@ impl UciEngine {
             self.clear_position_history();
         }
 
-        // Update history for initial position
         self.update_position_history();
 
-        // Parse moves
         if idx < parts.len() && parts[idx] == "moves" {
             idx += 1;
             while idx < parts.len() {
@@ -249,8 +262,7 @@ impl UciEngine {
                 idx += 1;
             }
         }
-        
-        // Store the last move as the expected ponder move (for validation during pondering)
+
         self.expected_ponder_move = last_move;
     }
 
@@ -280,7 +292,8 @@ impl UciEngine {
         };
 
         let legal = legal_moves(&self.board);
-        legal.iter()
+        legal
+            .iter()
             .find(|m| m.from == from && m.to == to && m.promotion == promotion)
             .copied()
     }
@@ -291,10 +304,220 @@ impl UciEngine {
         match ch {
             'q' => Some(if white { Piece::WQueen } else { Piece::BQueen }),
             'r' => Some(if white { Piece::WRook } else { Piece::BRook }),
-            'b' => Some(if white { Piece::WBishop } else { Piece::BBishop }),
-            'n' => Some(if white { Piece::WKnight } else { Piece::BKnight }),
+            'b' => Some(if white {
+                Piece::WBishop
+            } else {
+                Piece::BBishop
+            }),
+            'n' => Some(if white {
+                Piece::WKnight
+            } else {
+                Piece::BKnight
+            }),
             _ => None,
         }
+    }
+
+    async fn handle_ponderhit(&mut self) {
+        self.ponderhit_occurred.store(true, Ordering::SeqCst);
+        self.pondering.store(false, Ordering::SeqCst);
+        uci_println!("info string Ponder hit - stopping search");
+
+        self.cancel_flag.store(true, Ordering::SeqCst);
+
+        let search_result_clone = Arc::clone(&self.current_search_result);
+        let searching_clone = Arc::clone(&self.searching);
+
+        let mut attempts = 0;
+        while searching_clone.load(Ordering::SeqCst) && attempts < 1000 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            attempts += 1;
+        }
+
+        let (mut reply_move, next_ponder_move) = {
+            let result = search_result_clone.lock().unwrap();
+            result.clone().unwrap_or((None, None))
+        };
+
+        let current_legals = legal_moves(&self.board);
+        if let Some(mv) = reply_move {
+            if !current_legals.contains(&mv) {
+                reply_move = None;
+            }
+        }
+
+        if let Some(mv) = reply_move {
+            if let Some(pm) = next_ponder_move {
+                uci_println!("bestmove {} ponder {}", move_to_uci(mv), move_to_uci(pm));
+            } else {
+                uci_println!("bestmove {}", move_to_uci(mv));
+            }
+        } else {
+            let moves = legal_moves(&self.board);
+            if let Some(&fallback) = moves.first() {
+                uci_println!("bestmove {}", move_to_uci(fallback));
+            } else {
+                uci_println!("bestmove 0000");
+            }
+        }
+
+        let saved_ponder_params = self.ponder_time_params;
+
+        self.ponder_time_params = None;
+        self.ponder_start_time = None;
+
+        if let Some(pm) = next_ponder_move {
+            self.pending_ponder_search = Some((
+                Some(pm),
+                saved_ponder_params.map(|p| p.0).flatten(),
+                saved_ponder_params.map(|p| p.1).flatten(),
+                saved_ponder_params.map(|p| p.2).flatten(),
+            ));
+        }
+
+        self.ponderhit_occurred.store(false, Ordering::SeqCst);
+    }
+
+    async fn start_ponder_search(
+        &mut self,
+        wtime: Option<u64>,
+        btime: Option<u64>,
+        movetime: Option<u64>,
+    ) {
+        let depth = 100; // Deep search for pondering
+
+        let fallback_move = {
+            let moves = legal_moves(&self.board);
+            if !moves.is_empty() {
+                Some(moves[0])
+            } else {
+                None
+            }
+        };
+
+        self.cancel_flag.store(true, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        self.searching.store(true, Ordering::SeqCst);
+        self.cancel_flag.store(false, Ordering::SeqCst);
+        self.pondering.store(true, Ordering::SeqCst);
+        self.ponder_time_params = Some((wtime, btime, movetime));
+        self.ponder_start_time = Some(Instant::now());
+
+        let mut board_for_search = self.board.clone();
+        if let Some(pm) = self.expected_ponder_move {
+            apply_move(&mut board_for_search, pm);
+        }
+
+        let board_clone = board_for_search;
+        let threads = self.threads.load(Ordering::SeqCst);
+        let cancel_clone = Arc::clone(&self.cancel_flag);
+        let searching_clone = Arc::clone(&self.searching);
+        let pondering_clone = Arc::clone(&self.pondering);
+        let expected_ponder_move = self.expected_ponder_move;
+        let search_result_clone = Arc::clone(&self.current_search_result);
+        let cancel_for_ponder_search = Arc::clone(&self.cancel_flag);
+        let ponderhit_for_ponder_search = Arc::clone(&self.ponderhit_occurred);
+
+        let start_time = Instant::now();
+
+        let nnue_clone = if self.nnue.is_loaded() {
+            Some(self.nnue.clone_handle())
+        } else {
+            None
+        };
+
+        let history = self.position_history.clone();
+        let multi_pv = self.multi_pv.load(Ordering::Relaxed) as usize;
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = tokio::task::spawn_blocking(move || {
+            search_position(
+                board_clone,
+                depth,
+                threads,
+                history,
+                cancel_clone,
+                nnue_clone,
+                multi_pv,
+                |event| {
+                    let _ = tx.send(event);
+                },
+            )
+        });
+
+        tokio::spawn(async move {
+            let mut best_move = fallback_move;
+            let mut ponder_move = None;
+            let mut best_depth = 0;
+            let mut pv_index = 1;
+            let mut last_depth = 0;
+
+            while let Some(event) = rx.recv().await {
+                if cancel_for_ponder_search.load(Ordering::SeqCst)
+                    || ponderhit_for_ponder_search.load(Ordering::SeqCst)
+                {
+                    break;
+                }
+                if event.depth != last_depth {
+                    pv_index = 1;
+                    last_depth = event.depth;
+                }
+
+                if pv_index == 1 {
+                    if let Some(mv) = event.best_move {
+                        let is_valid = expected_ponder_move.is_some();
+
+                        if is_valid && event.depth >= best_depth {
+                            best_move = Some(mv);
+                            best_depth = event.depth;
+                            if event.pv_len > 1 && event.pv[0] == Some(mv) {
+                                ponder_move = event.pv[1];
+                            } else {
+                                ponder_move = None;
+                            }
+
+                            let mut result = search_result_clone.lock().unwrap();
+                            *result = Some((best_move, ponder_move));
+                        }
+                    }
+                }
+
+                let elapsed = start_time.elapsed().as_millis() as u64;
+
+                uci_print!(
+                    "info depth {} multipv {} score cp {} nodes {}",
+                    event.depth,
+                    pv_index,
+                    event.score,
+                    event.nodes
+                );
+
+                if elapsed > 0 {
+                    let nps = (event.nodes as u64 * 1000) / elapsed;
+                    uci_print!(" nps {} time {}", nps, elapsed);
+                }
+
+                if event.pv_len > 0 {
+                    uci_print!(" pv");
+                    for i in 0..event.pv_len {
+                        if let Some(mv) = event.pv[i] {
+                            uci_print!(" {}", move_to_uci(mv));
+                        }
+                    }
+                }
+
+                uci_println!();
+                pv_index += 1;
+            }
+
+            let _ = handle.await;
+            searching_clone.store(false, Ordering::SeqCst);
+            pondering_clone.store(false, Ordering::SeqCst);
+
+            let mut result = search_result_clone.lock().unwrap();
+            *result = Some((best_move, ponder_move));
+        });
     }
 
     async fn handle_go(&mut self, parts: &[&str]) {
@@ -308,8 +531,8 @@ impl UciEngine {
         if !is_ponder {
             if let Some(ref book) = self.book {
                 if let Some(book_move) = book.get_best_move(&self.board) {
-                    println!("info string Book move found");
-                    println!("bestmove {}", move_to_uci(book_move));
+                    uci_println!("info string Book move found");
+                    uci_println!("bestmove {}", move_to_uci(book_move));
                     return;
                 }
             }
@@ -327,7 +550,6 @@ impl UciEngine {
         while i < parts.len() {
             match parts[i] {
                 "ponder" => {
-                    // Already handled above
                     i += 1;
                 }
                 "depth" => {
@@ -344,7 +566,6 @@ impl UciEngine {
                     if i + 1 < parts.len() {
                         if let Ok(mt) = parts[i + 1].parse::<u64>() {
                             movetime = Some(mt);
-                            // Set high depth for movetime mode
                             depth = 100;
                         }
                         i += 2;
@@ -403,27 +624,30 @@ impl UciEngine {
             }
         }
         if movetime.is_none() && !is_ponder {
-            let our_time = if self.board.is_white_to_move() { wtime } else { btime };
+            let our_time = if self.board.is_white_to_move() {
+                wtime
+            } else {
+                btime
+            };
             if let Some(time_left) = our_time {
-                // Simple time management: use 1/30 of remaining time
-                // This is a basic heuristic, more sophisticated time management can be added
                 let time_to_use = time_left / 30;
                 movetime = Some(time_to_use.max(100)); // At least 100ms
                 depth = 100; // Search deep but stop on time
             }
         }
-        
+
         if is_ponder {
             self.ponder_time_params = Some((wtime, btime, movetime));
             self.ponder_start_time = Some(Instant::now());
             depth = 100;
             movetime = None;
+
+            self.expected_ponder_move = self.last_ponder_suggestion.lock().unwrap().clone();
         }
 
-        // Check for draw by repetition - but still need to return a legal move
         let is_repetition_draw = self.is_draw_by_repetition();
         if is_repetition_draw {
-            println!("info string Draw by repetition");
+            uci_println!("info string Draw by repetition");
         }
 
         let fallback_move = {
@@ -438,8 +662,20 @@ impl UciEngine {
         self.searching.store(true, Ordering::SeqCst);
         self.cancel_flag.store(false, Ordering::SeqCst);
         self.pondering.store(is_ponder, Ordering::SeqCst);
+        self.ponderhit_occurred.store(false, Ordering::SeqCst);
+        {
+            let mut result = self.current_search_result.lock().unwrap();
+            *result = None;
+        }
 
-        let board_clone = self.board.clone();
+        let mut board_for_search = self.board.clone();
+        if is_ponder {
+            if let Some(pm) = self.expected_ponder_move {
+                apply_move(&mut board_for_search, pm);
+            }
+        }
+
+        let board_clone = board_for_search;
         let threads = self.threads.load(Ordering::SeqCst);
         let cancel_clone = Arc::clone(&self.cancel_flag);
         let searching_clone = Arc::clone(&self.searching);
@@ -462,32 +698,43 @@ impl UciEngine {
         } else {
             None
         };
-        
-        // Print evaluation mode info
+
         if self.nnue.is_loaded() {
             if let Some(path) = self.nnue.path() {
-                println!("info string Using NNUE evaluation: {}", path);
+                uci_println!("info string Using NNUE evaluation: {}", path);
             } else {
-                println!("info string Using NNUE evaluation");
+                uci_println!("info string Using NNUE evaluation");
             }
         } else {
-            println!("info string Using HCE evaluation");
+            uci_println!("info string Using HCE evaluation");
         }
-        
+
         let history = self.position_history.clone();
         let multi_pv = self.multi_pv.load(Ordering::Relaxed) as usize;
-        
+
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = tokio::task::spawn_blocking(move || {
-            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, multi_pv, |event| {
-                let _ = tx.send(event);
-            })
+            search_position(
+                board_clone,
+                depth,
+                threads,
+                history,
+                cancel_clone,
+                nnue_clone,
+                multi_pv,
+                |event| {
+                    let _ = tx.send(event);
+                },
+            )
         });
 
-        // Spawn search task that runs independently
         let pondering_clone = Arc::clone(&self.pondering);
         let expected_ponder_move = self.expected_ponder_move;
         let is_ponder_search = is_ponder;
+        let search_result_clone = Arc::clone(&self.current_search_result);
+        let ponderhit_clone = Arc::clone(&self.ponderhit_occurred);
+        let cancel_for_search = Arc::clone(&self.cancel_flag);
+        let last_ponder_suggestion = Arc::clone(&self.last_ponder_suggestion);
         tokio::spawn(async move {
             let mut best_move = fallback_move; // Start with a legal move
             let mut ponder_move = None;
@@ -495,71 +742,89 @@ impl UciEngine {
             let mut pv_index = 1;
             let mut last_depth = 0;
 
-            // Receive and print search info
             while let Some(event) = rx.recv().await {
+                if cancel_for_search.load(Ordering::SeqCst)
+                    || ponderhit_clone.load(Ordering::SeqCst)
+                {
+                    break;
+                }
                 if event.depth != last_depth {
                     pv_index = 1;
                     last_depth = event.depth;
                 }
-                
+
                 if pv_index == 1 {
                     if let Some(mv) = event.best_move {
                         let is_valid = if is_ponder_search {
-                            if let Some(expected_mv) = expected_ponder_move {
-                                true
-                            } else {
-                                false
-                            }
+                            expected_ponder_move.is_some()
                         } else {
                             true
                         };
-                        
+
                         if is_valid && event.depth >= best_depth {
                             best_move = Some(mv);
                             best_depth = event.depth;
-                            if !is_ponder_search && event.pv_len > 1 && event.pv[0] == Some(mv) {
-                                ponder_move = event.pv[1];
-                            } else {
-                                ponder_move = None;
+
+                            if event.pv_len > 0 {
+                                best_move = event.pv[0];
                             }
+                            ponder_move = if event.pv_len > 1 { event.pv[1] } else { None };
+
+                            if !is_ponder_search {
+                                *last_ponder_suggestion.lock().unwrap() = ponder_move;
+                            }
+
+                            let mut result = search_result_clone.lock().unwrap();
+                            *result = Some((best_move, ponder_move));
                         }
                     }
                 }
-                
+
                 let elapsed = start_time.elapsed().as_millis() as u64;
-                
-                print!("info depth {} multipv {} score cp {} nodes {}", 
-                    event.depth, pv_index, event.score, event.nodes);
-                
+
+                uci_print!(
+                    "info depth {} multipv {} score cp {} nodes {}",
+                    event.depth,
+                    pv_index,
+                    event.score,
+                    event.nodes
+                );
+
                 if elapsed > 0 {
                     let nps = (event.nodes as u64 * 1000) / elapsed;
-                    print!(" nps {} time {}", nps, elapsed);
+                    uci_print!(" nps {} time {}", nps, elapsed);
                 }
-                
+
                 if event.pv_len > 0 {
-                    print!(" pv");
+                    uci_print!(" pv");
                     for i in 0..event.pv_len {
                         if let Some(mv) = event.pv[i] {
-                            print!(" {}", move_to_uci(mv));
+                            uci_print!(" {}", move_to_uci(mv));
                         }
                     }
                 }
-                
-                println!();
+
+                uci_println!();
                 pv_index += 1;
             }
 
             let _ = handle.await;
             searching_clone.store(false, Ordering::SeqCst);
             pondering_clone.store(false, Ordering::SeqCst);
-            if let Some(mv) = best_move {
-                if let Some(pm) = ponder_move {
-                    println!("bestmove {} ponder {}", move_to_uci(mv), move_to_uci(pm));
+
+            let mut result = search_result_clone.lock().unwrap();
+            *result = Some((best_move, ponder_move));
+
+            if !ponderhit_clone.load(Ordering::SeqCst) {
+                if let Some(mv) = best_move {
+                    if let Some(pm) = ponder_move {
+                        uci_println!("bestmove {} ponder {}", move_to_uci(mv), move_to_uci(pm));
+                    } else {
+                        uci_println!("bestmove {}", move_to_uci(mv));
+                    }
                 } else {
-                    println!("bestmove {}", move_to_uci(mv));
+                    uci_println!("bestmove 0000");
                 }
-            } else {
-                println!("bestmove 0000");
             }
         });
     }
@@ -569,11 +834,10 @@ impl UciEngine {
             return;
         }
 
-        // Find "name" and "value" positions
         let name_start = 1;
         let mut name_end = name_start;
         let mut value_start = None;
-        
+
         for (i, &part) in parts.iter().enumerate().skip(name_start) {
             if part == "value" {
                 name_end = i;
@@ -581,28 +845,31 @@ impl UciEngine {
                 break;
             }
         }
-        
+
         if name_end == name_start {
             name_end = parts.len();
         }
-        
+
         let option_name = parts[name_start..name_end].join(" ").to_lowercase();
-        
+
         if let Some(value_idx) = value_start {
             if value_idx < parts.len() {
                 let value = parts[value_idx..].join(" ");
-                
+
                 match option_name.as_str() {
                     "threads" => {
                         if let Ok(t) = value.parse::<u32>() {
                             self.threads.store(t.clamp(1, 512), Ordering::SeqCst);
-                            println!("info string Threads set to {}", t.clamp(1, 512));
+                            uci_println!("info string Threads set to {}", t.clamp(1, 512));
                         }
                     }
                     "hash" => {
                         if let Ok(h) = value.parse::<u32>() {
                             self.hash_size.store(h.clamp(1, 33554432), Ordering::SeqCst);
-                            println!("info string Hash size set to {} MB", h.clamp(1, 33554432));
+                            uci_println!(
+                                "info string Hash size set to {} MB",
+                                h.clamp(1, 33554432)
+                            );
                         }
                     }
                     "book" => {
@@ -612,7 +879,7 @@ impl UciEngine {
                     }
                     "evalfile" => {
                         if value == "<embedded>" {
-                            println!("info string Using embedded NNUE");
+                            uci_println!("info string Using embedded NNUE");
                         } else {
                             self.handle_evalfile_export(&value);
                         }
@@ -620,79 +887,81 @@ impl UciEngine {
                     "multipv" => {
                         if !value.is_empty() {
                             if let Ok(pv_count) = value.parse::<u32>() {
-                                self.multi_pv.store(pv_count.max(1).min(500), Ordering::Relaxed);
+                                self.multi_pv
+                                    .store(pv_count.max(1).min(500), Ordering::Relaxed);
                             }
                         }
                     }
                     "ponder" => {
                         let enabled = value.to_lowercase() == "true";
                         self.ponder_enabled.store(enabled, Ordering::SeqCst);
-                        println!("info string Ponder {}", if enabled { "enabled" } else { "disabled" });
+                        uci_println!(
+                            "info string Ponder {}",
+                            if enabled { "enabled" } else { "disabled" }
+                        );
                     }
                     "uci_chess960" | "move overhead" | "nodestime" => {
-                        println!("info string Option {} not yet implemented", option_name);
+                        uci_println!("info string Option {} not yet implemented", option_name);
                     }
                     _ => {}
                 }
             }
         }
     }
-    
+
     fn handle_evalfile_export(&mut self, path: &str) {
         use crate::nnue::EMBEDDED_NNUE;
-        
+
         match std::fs::write(path, EMBEDDED_NNUE) {
             Ok(_) => {
-                println!("info string Exported embedded NNUE to: {}", path);
+                uci_println!("info string Exported embedded NNUE to: {}", path);
                 self.nnue_file = Some(path.to_string());
             }
             Err(e) => {
-                println!("info string Failed to export NNUE: {}", e);
+                uci_println!("info string Failed to export NNUE: {}", e);
             }
         }
     }
-    
+
     fn handle_use_nnue(&mut self, parts: &[&str]) {
         if parts.is_empty() {
-            println!("info string Error: missing NNUE path");
+            uci_println!("info string Error: missing NNUE path");
             return;
         }
-        
+
         let path = parts.join(" ");
         match self.nnue.load(&path) {
             Ok(_) => {
-                println!("info string NNUE loaded: {}", path);
-                println!("info string Using NNUE evaluation");
+                uci_println!("info string NNUE loaded: {}", path);
+                uci_println!("info string Using NNUE evaluation");
             }
             Err(e) => {
-                println!("info string Failed to load NNUE: {}", e);
+                uci_println!("info string Failed to load NNUE: {}", e);
             }
         }
     }
 }
 
 impl UciEngine {
-    // FFI helper methods for Android bindings
     #[allow(dead_code)]
     pub fn set_position_from_fen(&mut self, fen: &str) {
         self.board = Board::from_fen(fen);
         self.clear_position_history();
         self.update_position_history();
     }
-    
+
     #[allow(dead_code)]
     pub fn get_best_move(&self, _depth: u32) -> Option<String> {
-        // Placeholder - real implementation would need async support
         None
     }
-    
+
     #[allow(dead_code)]
     pub fn get_eval(&self) -> i32 {
         use crate::eval::evaluate;
         let breakdown = evaluate(&self.board);
         breakdown.total
     }
-    
+
     #[allow(dead_code)]
     pub fn apply_move_uci(&mut self, move_str: &str) -> bool {
         if let Some(mv) = self.parse_uci_move(move_str) {
@@ -703,17 +972,18 @@ impl UciEngine {
             false
         }
     }
-    
+
     #[allow(dead_code)]
     pub fn get_legal_moves(&self) -> Option<String> {
         let moves = legal_moves(&self.board);
-        let moves_str = moves.iter()
+        let moves_str = moves
+            .iter()
             .map(|m| move_to_uci(*m))
             .collect::<Vec<_>>()
             .join(",");
         Some(moves_str)
     }
-    
+
     #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
@@ -729,7 +999,7 @@ fn move_to_uci(mv: Move) -> String {
     let to_file = files[(mv.to % 8) as usize];
     let to_rank = (mv.to / 8) + 1;
     let mut s = format!("{}{}{}{}", from_file, from_rank, to_file, to_rank);
-    
+
     if let Some(promo) = mv.promotion {
         use crate::board::Piece;
         let ch = match promo {
