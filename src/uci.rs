@@ -1,6 +1,6 @@
 use std::io::{self, BufRead};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::board::Board;
@@ -19,11 +19,13 @@ pub struct UciEngine {
     searching: Arc<AtomicBool>,
     cancel_flag: Arc<AtomicBool>,
     pondering: Arc<AtomicBool>,
+    ponderhit_occurred: Arc<AtomicBool>,
     ponder_enabled: AtomicBool,
     ponder_start_time: Option<Instant>,
     ponder_time_params: Option<(Option<u64>, Option<u64>, Option<u64>)>, // (wtime, btime, movetime)
     expected_ponder_move: Option<Move>, // The move we're pondering on (opponent's expected move)
     position_history: Vec<u64>,
+    current_search_result: Arc<Mutex<Option<(Option<Move>, Option<Move>)>>>, // (best_move, ponder_move)
     nnue: NnueEvaluator,
     book: Option<OptimizedPolyglotBook>,
     nnue_file: Option<String>,
@@ -49,6 +51,8 @@ impl UciEngine {
             nnue: NnueEvaluator::new(),
             book: None,
             nnue_file: None,
+            current_search_result: Arc::new(Mutex::new(None)),
+            ponderhit_occurred: Arc::new(AtomicBool::new(false)),
         }
     }
     
@@ -70,6 +74,8 @@ impl UciEngine {
             nnue,
             book: None,
             nnue_file: None,
+            current_search_result: Arc::new(Mutex::new(None)),
+            ponderhit_occurred: Arc::new(AtomicBool::new(false)),
         }
     }
     
@@ -144,7 +150,7 @@ impl UciEngine {
 
         match parts[0] {
             "uci" => {
-                println!("id name z-slon 0.2.0");
+                println!("id name z-slon 0.4.0");
                 println!("id author hedgegod");
                 println!("option name Hash type spin default 16 min 1 max 33554432");
                 println!("option name Threads type spin default 1 min 1 max 512");
@@ -176,19 +182,7 @@ impl UciEngine {
             "ponderhit" => {
                 // Ponder hit - stop search immediately and return best move
                 if self.pondering.load(Ordering::SeqCst) && self.searching.load(Ordering::SeqCst) {
-                    self.pondering.store(false, Ordering::SeqCst);
-                    println!("info string Ponder hit - stopping search");
-                    
-                    // Give a tiny delay to ensure at least depth 1 completes if very early
-                    let cancel_clone = Arc::clone(&self.cancel_flag);
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-                        cancel_clone.store(true, Ordering::SeqCst);
-                    });
-                    
-                    // Clear stored ponder parameters
-                    self.ponder_time_params = None;
-                    self.ponder_start_time = None;
+                    self.handle_ponderhit().await;
                 }
             }
             "use" => {
@@ -295,6 +289,205 @@ impl UciEngine {
             'n' => Some(if white { Piece::WKnight } else { Piece::BKnight }),
             _ => None,
         }
+    }
+
+    async fn handle_ponderhit(&mut self) {
+        self.ponderhit_occurred.store(true, Ordering::SeqCst);
+        self.pondering.store(false, Ordering::SeqCst);
+        println!("info string Ponder hit - stopping search");
+        
+        // Cancel the search immediately
+        self.cancel_flag.store(true, Ordering::SeqCst);
+        
+        // Wait for search to complete and get results
+        let search_result_clone = Arc::clone(&self.current_search_result);
+        let searching_clone = Arc::clone(&self.searching);
+        
+        // Wait a bit for search to finish (with timeout)
+        let mut attempts = 0;
+        while searching_clone.load(Ordering::SeqCst) && attempts < 1000 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            attempts += 1;
+        }
+        
+        // Get the search results
+        let (best_move, ponder_move) = {
+            let result = search_result_clone.lock().unwrap();
+            result.clone().unwrap_or((None, None))
+        };
+        
+        // Output bestmove with ponder move
+        if let Some(bm) = best_move {
+            if let Some(pm) = ponder_move {
+                println!("bestmove {} ponder {}", move_to_uci(bm), move_to_uci(pm));
+            } else {
+                println!("bestmove {}", move_to_uci(bm));
+            }
+        } else {
+            // Fallback: get any legal move
+            let moves = legal_moves(&self.board);
+            if let Some(&fallback) = moves.first() {
+                println!("bestmove {}", move_to_uci(fallback));
+            } else {
+                println!("bestmove 0000");
+            }
+        }
+        
+        // Save ponder parameters before clearing
+        let saved_ponder_params = self.ponder_time_params;
+        
+        // Clear stored ponder parameters
+        self.ponder_time_params = None;
+        self.ponder_start_time = None;
+        
+        // Start new ponder search if we have a ponder move
+        // When ponderhit occurs, the opponent has played the move we were pondering on.
+        // The board should already be updated (via position command), but for continuous
+        // pondering, we apply our best move and then start pondering on the new ponder move.
+        if let Some(pm) = ponder_move {
+            // Apply our best move to the board (for continuous pondering)
+            if let Some(bm) = best_move {
+                apply_move(&mut self.board, bm);
+                self.update_position_history();
+            }
+            
+            // Set the expected ponder move for the new search (the move we expect opponent to play)
+            self.expected_ponder_move = Some(pm);
+            
+            // Reset ponderhit flag for new search
+            self.ponderhit_occurred.store(false, Ordering::SeqCst);
+            
+            // Start new ponder search
+            if let Some((wtime, btime, movetime)) = saved_ponder_params {
+                self.start_ponder_search(wtime, btime, movetime).await;
+            }
+        } else {
+            // Reset ponderhit flag
+            self.ponderhit_occurred.store(false, Ordering::SeqCst);
+        }
+    }
+    
+    async fn start_ponder_search(&mut self, wtime: Option<u64>, btime: Option<u64>, movetime: Option<u64>) {
+        let depth = 100; // Deep search for pondering
+        
+        let fallback_move = {
+            let moves = legal_moves(&self.board);
+            if !moves.is_empty() {
+                Some(moves[0])
+            } else {
+                None
+            }
+        };
+        
+        // Make sure previous search is stopped
+        self.cancel_flag.store(true, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        
+        self.searching.store(true, Ordering::SeqCst);
+        self.cancel_flag.store(false, Ordering::SeqCst);
+        self.pondering.store(true, Ordering::SeqCst);
+        self.ponder_time_params = Some((wtime, btime, movetime));
+        self.ponder_start_time = Some(Instant::now());
+        
+        let board_clone = self.board.clone();
+        let threads = self.threads.load(Ordering::SeqCst);
+        let cancel_clone = Arc::clone(&self.cancel_flag);
+        let searching_clone = Arc::clone(&self.searching);
+        let pondering_clone = Arc::clone(&self.pondering);
+        let expected_ponder_move = self.expected_ponder_move;
+        let search_result_clone = Arc::clone(&self.current_search_result);
+        let cancel_for_ponder_search = Arc::clone(&self.cancel_flag);
+        let ponderhit_for_ponder_search = Arc::clone(&self.ponderhit_occurred);
+        
+        let start_time = Instant::now();
+        
+        let nnue_clone = if self.nnue.is_loaded() {
+            Some(self.nnue.clone_handle())
+        } else {
+            None
+        };
+        
+        let history = self.position_history.clone();
+        let multi_pv = self.multi_pv.load(Ordering::Relaxed) as usize;
+        
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = tokio::task::spawn_blocking(move || {
+            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, multi_pv, |event| {
+                let _ = tx.send(event);
+            })
+        });
+        
+        // Spawn search task
+        tokio::spawn(async move {
+            let mut best_move = fallback_move;
+            let mut ponder_move = None;
+            let mut best_depth = 0;
+            let mut pv_index = 1;
+            let mut last_depth = 0;
+            
+            // Receive and print search info
+            while let Some(event) = rx.recv().await {
+                // Stop processing if cancelled or ponderhit occurred
+                if cancel_for_ponder_search.load(Ordering::SeqCst) || ponderhit_for_ponder_search.load(Ordering::SeqCst) {
+                    break;
+                }
+                if event.depth != last_depth {
+                    pv_index = 1;
+                    last_depth = event.depth;
+                }
+                
+                if pv_index == 1 {
+                    if let Some(mv) = event.best_move {
+                        let is_valid = expected_ponder_move.is_some();
+                        
+                        if is_valid && event.depth >= best_depth {
+                            best_move = Some(mv);
+                            best_depth = event.depth;
+                            // Extract ponder move from PV (second move in PV is what we expect opponent to play)
+                            if event.pv_len > 1 && event.pv[0] == Some(mv) {
+                                ponder_move = event.pv[1];
+                            } else {
+                                ponder_move = None;
+                            }
+                            
+                            // Update shared state
+                            let mut result = search_result_clone.lock().unwrap();
+                            *result = Some((best_move, ponder_move));
+                        }
+                    }
+                }
+                
+                let elapsed = start_time.elapsed().as_millis() as u64;
+                
+                print!("info depth {} multipv {} score cp {} nodes {}", 
+                    event.depth, pv_index, event.score, event.nodes);
+                
+                if elapsed > 0 {
+                    let nps = (event.nodes as u64 * 1000) / elapsed;
+                    print!(" nps {} time {}", nps, elapsed);
+                }
+                
+                if event.pv_len > 0 {
+                    print!(" pv");
+                    for i in 0..event.pv_len {
+                        if let Some(mv) = event.pv[i] {
+                            print!(" {}", move_to_uci(mv));
+                        }
+                    }
+                }
+                
+                println!();
+                pv_index += 1;
+            }
+            
+            let _ = handle.await;
+            searching_clone.store(false, Ordering::SeqCst);
+            pondering_clone.store(false, Ordering::SeqCst);
+            
+            // Update final result
+            let mut result = search_result_clone.lock().unwrap();
+            *result = Some((best_move, ponder_move));
+        });
     }
 
     async fn handle_go(&mut self, parts: &[&str]) {
@@ -438,6 +631,12 @@ impl UciEngine {
         self.searching.store(true, Ordering::SeqCst);
         self.cancel_flag.store(false, Ordering::SeqCst);
         self.pondering.store(is_ponder, Ordering::SeqCst);
+        self.ponderhit_occurred.store(false, Ordering::SeqCst);
+        // Clear previous search result
+        {
+            let mut result = self.current_search_result.lock().unwrap();
+            *result = None;
+        }
 
         let board_clone = self.board.clone();
         let threads = self.threads.load(Ordering::SeqCst);
@@ -488,6 +687,9 @@ impl UciEngine {
         let pondering_clone = Arc::clone(&self.pondering);
         let expected_ponder_move = self.expected_ponder_move;
         let is_ponder_search = is_ponder;
+        let search_result_clone = Arc::clone(&self.current_search_result);
+        let ponderhit_clone = Arc::clone(&self.ponderhit_occurred);
+        let cancel_for_search = Arc::clone(&self.cancel_flag);
         tokio::spawn(async move {
             let mut best_move = fallback_move; // Start with a legal move
             let mut ponder_move = None;
@@ -497,6 +699,10 @@ impl UciEngine {
 
             // Receive and print search info
             while let Some(event) = rx.recv().await {
+                // Stop processing if cancelled or ponderhit occurred
+                if cancel_for_search.load(Ordering::SeqCst) || ponderhit_clone.load(Ordering::SeqCst) {
+                    break;
+                }
                 if event.depth != last_depth {
                     pv_index = 1;
                     last_depth = event.depth;
@@ -505,11 +711,7 @@ impl UciEngine {
                 if pv_index == 1 {
                     if let Some(mv) = event.best_move {
                         let is_valid = if is_ponder_search {
-                            if let Some(expected_mv) = expected_ponder_move {
-                                true
-                            } else {
-                                false
-                            }
+                            expected_ponder_move.is_some()
                         } else {
                             true
                         };
@@ -517,11 +719,16 @@ impl UciEngine {
                         if is_valid && event.depth >= best_depth {
                             best_move = Some(mv);
                             best_depth = event.depth;
-                            if !is_ponder_search && event.pv_len > 1 && event.pv[0] == Some(mv) {
+                            // Extract ponder move from PV (second move in PV is what we expect opponent to play)
+                            if event.pv_len > 1 && event.pv[0] == Some(mv) {
                                 ponder_move = event.pv[1];
                             } else {
                                 ponder_move = None;
                             }
+                            
+                            // Update shared state
+                            let mut result = search_result_clone.lock().unwrap();
+                            *result = Some((best_move, ponder_move));
                         }
                     }
                 }
@@ -552,14 +759,22 @@ impl UciEngine {
             let _ = handle.await;
             searching_clone.store(false, Ordering::SeqCst);
             pondering_clone.store(false, Ordering::SeqCst);
-            if let Some(mv) = best_move {
-                if let Some(pm) = ponder_move {
-                    println!("bestmove {} ponder {}", move_to_uci(mv), move_to_uci(pm));
+            
+            // Update final result
+            let mut result = search_result_clone.lock().unwrap();
+            *result = Some((best_move, ponder_move));
+            
+            // Only output bestmove if ponderhit didn't occur (to avoid duplicate output)
+            if !ponderhit_clone.load(Ordering::SeqCst) {
+                if let Some(mv) = best_move {
+                    if let Some(pm) = ponder_move {
+                        println!("bestmove {} ponder {}", move_to_uci(mv), move_to_uci(pm));
+                    } else {
+                        println!("bestmove {}", move_to_uci(mv));
+                    }
                 } else {
-                    println!("bestmove {}", move_to_uci(mv));
+                    println!("bestmove 0000");
                 }
-            } else {
-                println!("bestmove 0000");
             }
         });
     }
