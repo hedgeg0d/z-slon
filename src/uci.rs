@@ -142,7 +142,7 @@ impl UciEngine {
 
         match parts[0] {
             "uci" => {
-                uci_println!("id name z-slon 0.5.0");
+                uci_println!("id name z-slon 0.6.0");
                 uci_println!("id author hedgegod");
                 uci_println!("option name Hash type spin default 16 min 1 max 33554432");
                 uci_println!("option name Threads type spin default 1 min 1 max 512");
@@ -174,14 +174,17 @@ impl UciEngine {
             "ponderhit" => {
                 if self.pondering.load(Ordering::SeqCst) && self.searching.load(Ordering::SeqCst) {
                     self.pondering.store(false, Ordering::SeqCst);
-                    uci_println!("info string Ponder hit - stopping search");
-                    
-                    let cancel_clone = Arc::clone(&self.cancel_flag);
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-                        cancel_clone.store(true, Ordering::SeqCst);
-                    });
-                    
+                    let mt = self.ponder_time_params.and_then(|p| p.2);
+                    if let Some(mt) = mt {
+                        let cancel_clone = Arc::clone(&self.cancel_flag);
+                        let pondering_clone = Arc::clone(&self.pondering);
+                        tokio::spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(mt)).await;
+                            if !pondering_clone.load(Ordering::SeqCst) {
+                                cancel_clone.store(true, Ordering::SeqCst);
+                            }
+                        });
+                    }
                     self.ponder_time_params = None;
                     self.ponder_start_time = None;
                 }
@@ -391,21 +394,25 @@ impl UciEngine {
                 }
             }
         }
+        let our_time = if self.board.is_white_to_move() { wtime } else { btime };
+        let our_inc = if self.board.is_white_to_move() { _winc } else { _binc }.unwrap_or(0);
+        let computed_mt = our_time.map(|time_left| {
+            let overhead = 30u64;
+            let usable = time_left.saturating_sub(overhead);
+            let target = usable / 25 + our_inc * 3 / 4;
+            let cap = (usable / 2).max(50);
+            target.clamp(50, cap)
+        });
+
         if movetime.is_none() && !is_ponder {
-            let our_time = if self.board.is_white_to_move() { wtime } else { btime };
-            let our_inc = if self.board.is_white_to_move() { _winc } else { _binc }.unwrap_or(0);
-            if let Some(time_left) = our_time {
-                let overhead = 30u64;
-                let usable = time_left.saturating_sub(overhead);
-                let target = usable / 25 + our_inc * 3 / 4;
-                let cap = (usable / 2).max(50);
-                movetime = Some(target.clamp(50, cap));
+            if let Some(mt) = computed_mt {
+                movetime = Some(mt);
                 depth = 100;
             }
         }
-        
+
         if is_ponder {
-            self.ponder_time_params = Some((wtime, btime, movetime));
+            self.ponder_time_params = Some((wtime, btime, computed_mt));
             self.ponder_start_time = Some(Instant::now());
             depth = 100;
             movetime = None;
@@ -504,7 +511,7 @@ impl UciEngine {
                         if is_valid && event.depth >= best_depth {
                             best_move = Some(mv);
                             best_depth = event.depth;
-                            if !is_ponder_search && event.pv_len > 1 && event.pv[0] == Some(mv) {
+                            if event.pv_len > 1 && event.pv[0] == Some(mv) {
                                 ponder_move = event.pv[1];
                             } else {
                                 ponder_move = None;
