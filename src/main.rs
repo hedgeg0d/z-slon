@@ -1,3 +1,5 @@
+#[macro_use]
+mod output;
 mod board;
 mod eval;
 mod movegen;

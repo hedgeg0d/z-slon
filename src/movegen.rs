@@ -75,6 +75,29 @@ pub fn legal_moves(board: &Board) -> Vec<Move> {
     filter_legal_moves(board, pseudo)
 }
 
+pub fn is_capture_move(board: &Board, m: Move) -> bool {
+    let target = board.square(m.to);
+    if target != Piece::Empty {
+        return true;
+    }
+    let piece = board.square(m.from);
+    if matches!(piece, Piece::WPawn | Piece::BPawn) {
+        let diff = (m.from as i8 - m.to as i8).abs();
+        if diff == 7 || diff == 9 {
+            return board.en_passant.is_some();
+        }
+    }
+    false
+}
+
+pub fn legal_captures(board: &Board) -> Vec<Move> {
+    let pseudo: Vec<Move> = generate_moves(board)
+        .into_iter()
+        .filter(|&m| is_capture_move(board, m))
+        .collect();
+    filter_legal_moves(board, pseudo)
+}
+
 pub fn is_in_check(board: &Board, white: bool) -> bool {
     let king_sq = board.king_sq(white);
     is_square_attacked(board, king_sq, !white)

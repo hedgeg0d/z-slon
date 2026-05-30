@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::board::{Board, Piece};
 use crate::eval::evaluate_with_nnue;
-use crate::movegen::{apply_move, is_in_check, legal_moves, Move};
+use crate::movegen::{apply_move, is_in_check, legal_captures, legal_moves, Move};
 use crate::nnue::NnueEvaluator;
 
 const MATE_SCORE: i32 = 1_000_000;
@@ -882,6 +882,14 @@ fn pvs(
             }
         }
 
+        if !is_pv && !in_check && !gives_check && is_quiet && depth <= 6
+            && i as u32 >= 3 + depth * depth
+            && best_score > -MATE_SCORE + 1000
+        {
+            position_history.pop();
+            continue;
+        }
+
         let extension = if gives_check { 1 } else { 0 };
         let child_depth = depth - 1 + extension;
 
@@ -998,11 +1006,11 @@ fn quiescence(
         alpha = stand_pat;
     }
 
-    let mut moves = legal_moves(board);
-
-    if !in_check {
-        moves.retain(|&mv| is_capture(board, mv));
-    }
+    let mut moves = if in_check {
+        legal_moves(board)
+    } else {
+        legal_captures(board)
+    };
 
     if moves.is_empty() {
         if in_check {

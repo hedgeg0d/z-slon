@@ -80,19 +80,19 @@ impl UciEngine {
     pub fn load_book(&mut self, path: &str) {
         match OptimizedPolyglotBook::load(path) {
             Ok(book) => {
-                println!("info string Polyglot book loaded: {}", path);
+                uci_println!("info string Polyglot book loaded: {}", path);
                 let (entries, first_key, last_key) = book.debug_info();
-                println!("info string Book entries: {}", entries);
+                uci_println!("info string Book entries: {}", entries);
                 if let Some(first_key) = first_key {
-                    println!("info string First entry key: 0x{:016X}", first_key);
+                    uci_println!("info string First entry key: 0x{:016X}", first_key);
                 }
                 if let Some(last_key) = last_key {
-                    println!("info string Last entry key: 0x{:016X}", last_key);
+                    uci_println!("info string Last entry key: 0x{:016X}", last_key);
                 }
                 self.book = Some(book);
             }
             Err(e) => {
-                println!("info string Failed to load Polyglot book: {}", e);
+                uci_println!("info string Failed to load Polyglot book: {}", e);
             }
         }
     }
@@ -142,21 +142,21 @@ impl UciEngine {
 
         match parts[0] {
             "uci" => {
-                println!("id name z-slon 0.4.0");
-                println!("id author hedgegod");
-                println!("option name Hash type spin default 16 min 1 max 33554432");
-                println!("option name Threads type spin default 1 min 1 max 512");
-                println!("option name UCI_Chess960 type check default false");
-                println!("option name Ponder type check default false");
-                println!("option name MultiPV type spin default 1 min 1 max 500");
-                println!("option name Move Overhead type spin default 10 min 0 max 5000");
-                println!("option name nodestime type spin default 0 min 0 max 10000");
-                println!("option name EvalFile type string default <embedded>");
-                println!("option name Book type string default <empty>");
-                println!("uciok");
+                uci_println!("id name z-slon 0.5.0");
+                uci_println!("id author hedgegod");
+                uci_println!("option name Hash type spin default 16 min 1 max 33554432");
+                uci_println!("option name Threads type spin default 1 min 1 max 512");
+                uci_println!("option name UCI_Chess960 type check default false");
+                uci_println!("option name Ponder type check default false");
+                uci_println!("option name MultiPV type spin default 1 min 1 max 500");
+                uci_println!("option name Move Overhead type spin default 10 min 0 max 5000");
+                uci_println!("option name nodestime type spin default 0 min 0 max 10000");
+                uci_println!("option name EvalFile type string default <embedded>");
+                uci_println!("option name Book type string default <empty>");
+                uci_println!("uciok");
             }
             "isready" => {
-                println!("readyok");
+                uci_println!("readyok");
             }
             "ucinewgame" => {
                 self.board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
@@ -174,7 +174,7 @@ impl UciEngine {
             "ponderhit" => {
                 if self.pondering.load(Ordering::SeqCst) && self.searching.load(Ordering::SeqCst) {
                     self.pondering.store(false, Ordering::SeqCst);
-                    println!("info string Ponder hit - stopping search");
+                    uci_println!("info string Ponder hit - stopping search");
                     
                     let cancel_clone = Arc::clone(&self.cancel_flag);
                     tokio::spawn(async move {
@@ -299,8 +299,8 @@ impl UciEngine {
         if !is_ponder {
             if let Some(ref book) = self.book {
                 if let Some(book_move) = book.get_best_move(&self.board) {
-                    println!("info string Book move found");
-                    println!("bestmove {}", move_to_uci(book_move));
+                    uci_println!("info string Book move found");
+                    uci_println!("bestmove {}", move_to_uci(book_move));
                     return;
                 }
             }
@@ -413,7 +413,7 @@ impl UciEngine {
 
         let is_repetition_draw = self.is_draw_by_repetition();
         if is_repetition_draw {
-            println!("info string Draw by repetition");
+            uci_println!("info string Draw by repetition");
         }
 
         let fallback_move = {
@@ -455,12 +455,12 @@ impl UciEngine {
         
         if self.nnue.is_loaded() {
             if let Some(path) = self.nnue.path() {
-                println!("info string Using NNUE evaluation: {}", path);
+                uci_println!("info string Using NNUE evaluation: {}", path);
             } else {
-                println!("info string Using NNUE evaluation");
+                uci_println!("info string Using NNUE evaluation");
             }
         } else {
-            println!("info string Using HCE evaluation");
+            uci_println!("info string Using HCE evaluation");
         }
         
         let history = self.position_history.clone();
@@ -515,24 +515,24 @@ impl UciEngine {
                 
                 let elapsed = start_time.elapsed().as_millis() as u64;
                 
-                print!("info depth {} multipv {} score cp {} nodes {}", 
+                uci_print!("info depth {} multipv {} score cp {} nodes {}", 
                     event.depth, pv_index, event.score, event.nodes);
                 
                 if elapsed > 0 {
                     let nps = (event.nodes as u64 * 1000) / elapsed;
-                    print!(" nps {} time {}", nps, elapsed);
+                    uci_print!(" nps {} time {}", nps, elapsed);
                 }
                 
                 if event.pv_len > 0 {
-                    print!(" pv");
+                    uci_print!(" pv");
                     for i in 0..event.pv_len {
                         if let Some(mv) = event.pv[i] {
-                            print!(" {}", move_to_uci(mv));
+                            uci_print!(" {}", move_to_uci(mv));
                         }
                     }
                 }
                 
-                println!();
+                uci_println!();
                 pv_index += 1;
             }
 
@@ -541,12 +541,12 @@ impl UciEngine {
             pondering_clone.store(false, Ordering::SeqCst);
             if let Some(mv) = best_move {
                 if let Some(pm) = ponder_move {
-                    println!("bestmove {} ponder {}", move_to_uci(mv), move_to_uci(pm));
+                    uci_println!("bestmove {} ponder {}", move_to_uci(mv), move_to_uci(pm));
                 } else {
-                    println!("bestmove {}", move_to_uci(mv));
+                    uci_println!("bestmove {}", move_to_uci(mv));
                 }
             } else {
-                println!("bestmove 0000");
+                uci_println!("bestmove 0000");
             }
         });
     }
@@ -582,13 +582,13 @@ impl UciEngine {
                     "threads" => {
                         if let Ok(t) = value.parse::<u32>() {
                             self.threads.store(t.clamp(1, 512), Ordering::SeqCst);
-                            println!("info string Threads set to {}", t.clamp(1, 512));
+                            uci_println!("info string Threads set to {}", t.clamp(1, 512));
                         }
                     }
                     "hash" => {
                         if let Ok(h) = value.parse::<u32>() {
                             self.hash_size.store(h.clamp(1, 33554432), Ordering::SeqCst);
-                            println!("info string Hash size set to {} MB", h.clamp(1, 33554432));
+                            uci_println!("info string Hash size set to {} MB", h.clamp(1, 33554432));
                         }
                     }
                     "book" => {
@@ -598,7 +598,7 @@ impl UciEngine {
                     }
                     "evalfile" => {
                         if value == "<embedded>" {
-                            println!("info string Using embedded NNUE");
+                            uci_println!("info string Using embedded NNUE");
                         } else {
                             self.handle_evalfile_export(&value);
                         }
@@ -613,10 +613,10 @@ impl UciEngine {
                     "ponder" => {
                         let enabled = value.to_lowercase() == "true";
                         self.ponder_enabled.store(enabled, Ordering::SeqCst);
-                        println!("info string Ponder {}", if enabled { "enabled" } else { "disabled" });
+                        uci_println!("info string Ponder {}", if enabled { "enabled" } else { "disabled" });
                     }
                     "uci_chess960" | "move overhead" | "nodestime" => {
-                        println!("info string Option {} not yet implemented", option_name);
+                        uci_println!("info string Option {} not yet implemented", option_name);
                     }
                     _ => {}
                 }
@@ -629,29 +629,29 @@ impl UciEngine {
         
         match std::fs::write(path, EMBEDDED_NNUE) {
             Ok(_) => {
-                println!("info string Exported embedded NNUE to: {}", path);
+                uci_println!("info string Exported embedded NNUE to: {}", path);
                 self.nnue_file = Some(path.to_string());
             }
             Err(e) => {
-                println!("info string Failed to export NNUE: {}", e);
+                uci_println!("info string Failed to export NNUE: {}", e);
             }
         }
     }
     
     fn handle_use_nnue(&mut self, parts: &[&str]) {
         if parts.is_empty() {
-            println!("info string Error: missing NNUE path");
+            uci_println!("info string Error: missing NNUE path");
             return;
         }
         
         let path = parts.join(" ");
         match self.nnue.load(&path) {
             Ok(_) => {
-                println!("info string NNUE loaded: {}", path);
-                println!("info string Using NNUE evaluation");
+                uci_println!("info string NNUE loaded: {}", path);
+                uci_println!("info string Using NNUE evaluation");
             }
             Err(e) => {
-                println!("info string Failed to load NNUE: {}", e);
+                uci_println!("info string Failed to load NNUE: {}", e);
             }
         }
     }
