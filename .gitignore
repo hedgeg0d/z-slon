@@ -1,7 +1,6 @@
 /target
 Cargo.lock
 uci.sh
-start_lichess_bot.sh
 .cargo/
 src_old
 komodo.bin
@@ -17,3 +16,6 @@ z-slon-base
 8moves.pgn.zip
 8moves_v3.pgn
 sprt_*.pgn
+ponder_test.pgn
+.lichess_token
+secrets/

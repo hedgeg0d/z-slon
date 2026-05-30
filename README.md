@@ -292,6 +292,46 @@ perf report
 - **[clap](https://crates.io/crates/clap)**: Command-line argument parsing
 - **[lazy_static](https://crates.io/crates/lazy_static)**: Static initialization for FFI bindings
 
+## Lichess Bot Launcher
+
+`start_lichess_bot.sh` is an interactive TUI launcher for running z-slon on
+Lichess via [lichess-bot](https://github.com/lichess-bot-devs/lichess-bot).
+
+```
+./start_lichess_bot.sh
+```
+
+It opens an `fzf`-driven menu where you configure the run before starting:
+
+- **Mode** — `matchmaking` (actively challenges other bots) or `passive`
+  (only accepts incoming challenges)
+- **Threads** — engine search threads
+- **Pondering** — think on the opponent's clock (uses ponderchain)
+- **Game type** — rated or casual (matchmaking)
+- **Rating range** — opponent rating spread to seek (matchmaking)
+- **Time controls** — one or more time controls to offer (matchmaking)
+
+Choosing **START** writes the selected options into `config_zslon_active.yml`
+(derived from `config_turbo.yml`) and launches the bot. If `fzf` is not
+installed it falls back to a plain text prompt.
+
+### Token setup
+
+The Lichess API token is never stored in the repository or in the YAML configs
+(they hold the placeholder `set_via_env`). Provide it in one of two ways:
+
+- put it in `.lichess_token` next to the script (git-ignored), or
+- export `LICHESS_BOT_TOKEN` in your environment.
+
+```
+echo "lip_yourTokenHere" > .lichess_token
+chmod 600 .lichess_token
+```
+
+Requirements: a working `lichess-bot` checkout (default `~/lichess-bot`,
+override with `ZSLON_BOT_DIR`) including its `venv`, plus optional `fzf` for
+the TUI.
+
 ## License
 
 MIT License - See LICENSE file for details
