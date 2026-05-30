@@ -75,7 +75,6 @@ pub struct Board {
 
 impl Hash for Board {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash only position-relevant data (not halfmove/fullmove counters)
         self.pieces.hash(state);
         self.white_to_move.hash(state);
         self.castling.hash(state);
@@ -265,7 +264,6 @@ impl Board {
     }
 
     pub fn is_insufficient_material(&self) -> bool {
-        // Check for insufficient material draws
         let mut piece_count = 0;
         let mut has_pawn = false;
         let mut has_rook = false;
@@ -292,20 +290,15 @@ impl Board {
             }
         }
 
-        // K vs K
         if piece_count == 0 {
             return true;
         }
 
-        // K+B vs K or K+N vs K
         if piece_count == 1 && !has_pawn && !has_rook && !has_queen {
             return true;
         }
 
-        // K+B vs K+B (same color bishops)
         if piece_count == 2 && white_bishops == 1 && black_bishops == 1 {
-            // Check if bishops are on same color squares
-            // This is a simplification - proper implementation would check actual square colors
             return true;
         }
 

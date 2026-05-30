@@ -21,8 +21,8 @@ pub struct UciEngine {
     pondering: Arc<AtomicBool>,
     ponder_enabled: AtomicBool,
     ponder_start_time: Option<Instant>,
-    ponder_time_params: Option<(Option<u64>, Option<u64>, Option<u64>)>, // (wtime, btime, movetime)
-    expected_ponder_move: Option<Move>, // The move we're pondering on (opponent's expected move)
+    ponder_time_params: Option<(Option<u64>, Option<u64>, Option<u64>)>,
+    expected_ponder_move: Option<Move>,
     position_history: Vec<u64>,
     nnue: NnueEvaluator,
     book: Option<OptimizedPolyglotBook>,
@@ -114,7 +114,6 @@ impl UciEngine {
     pub async fn run(&mut self) {
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         
-        // Spawn input reader task
         tokio::spawn(async move {
             let stdin = io::stdin();
             let mut lines = stdin.lock().lines();
@@ -128,7 +127,6 @@ impl UciEngine {
             }
         });
 
-        // Process commands
         while let Some(command) = rx.recv().await {
             if !self.handle_command(&command).await {
                 break;
@@ -144,7 +142,7 @@ impl UciEngine {
 
         match parts[0] {
             "uci" => {
-                println!("id name z-slon 0.2.0");
+                println!("id name z-slon 0.4.0");
                 println!("id author hedgegod");
                 println!("option name Hash type spin default 16 min 1 max 33554432");
                 println!("option name Threads type spin default 1 min 1 max 512");
@@ -174,19 +172,16 @@ impl UciEngine {
                 self.cancel_flag.store(true, Ordering::SeqCst);
             }
             "ponderhit" => {
-                // Ponder hit - stop search immediately and return best move
                 if self.pondering.load(Ordering::SeqCst) && self.searching.load(Ordering::SeqCst) {
                     self.pondering.store(false, Ordering::SeqCst);
                     println!("info string Ponder hit - stopping search");
                     
-                    // Give a tiny delay to ensure at least depth 1 completes if very early
                     let cancel_clone = Arc::clone(&self.cancel_flag);
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(10)).await;
                         cancel_clone.store(true, Ordering::SeqCst);
                     });
                     
-                    // Clear stored ponder parameters
                     self.ponder_time_params = None;
                     self.ponder_start_time = None;
                 }
@@ -216,7 +211,6 @@ impl UciEngine {
         let mut idx = 0;
         let mut last_move = None;
         
-        // Parse position
         if parts[idx] == "startpos" {
             self.board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
             self.clear_position_history();
@@ -233,10 +227,8 @@ impl UciEngine {
             self.clear_position_history();
         }
 
-        // Update history for initial position
         self.update_position_history();
 
-        // Parse moves
         if idx < parts.len() && parts[idx] == "moves" {
             idx += 1;
             while idx < parts.len() {
@@ -250,7 +242,6 @@ impl UciEngine {
             }
         }
         
-        // Store the last move as the expected ponder move (for validation during pondering)
         self.expected_ponder_move = last_move;
     }
 
@@ -327,7 +318,6 @@ impl UciEngine {
         while i < parts.len() {
             match parts[i] {
                 "ponder" => {
-                    // Already handled above
                     i += 1;
                 }
                 "depth" => {
@@ -344,7 +334,6 @@ impl UciEngine {
                     if i + 1 < parts.len() {
                         if let Ok(mt) = parts[i + 1].parse::<u64>() {
                             movetime = Some(mt);
-                            // Set high depth for movetime mode
                             depth = 100;
                         }
                         i += 2;
@@ -404,12 +393,14 @@ impl UciEngine {
         }
         if movetime.is_none() && !is_ponder {
             let our_time = if self.board.is_white_to_move() { wtime } else { btime };
+            let our_inc = if self.board.is_white_to_move() { _winc } else { _binc }.unwrap_or(0);
             if let Some(time_left) = our_time {
-                // Simple time management: use 1/30 of remaining time
-                // This is a basic heuristic, more sophisticated time management can be added
-                let time_to_use = time_left / 30;
-                movetime = Some(time_to_use.max(100)); // At least 100ms
-                depth = 100; // Search deep but stop on time
+                let overhead = 30u64;
+                let usable = time_left.saturating_sub(overhead);
+                let target = usable / 25 + our_inc * 3 / 4;
+                let cap = (usable / 2).max(50);
+                movetime = Some(target.clamp(50, cap));
+                depth = 100;
             }
         }
         
@@ -420,7 +411,6 @@ impl UciEngine {
             movetime = None;
         }
 
-        // Check for draw by repetition - but still need to return a legal move
         let is_repetition_draw = self.is_draw_by_repetition();
         if is_repetition_draw {
             println!("info string Draw by repetition");
@@ -463,7 +453,6 @@ impl UciEngine {
             None
         };
         
-        // Print evaluation mode info
         if self.nnue.is_loaded() {
             if let Some(path) = self.nnue.path() {
                 println!("info string Using NNUE evaluation: {}", path);
@@ -484,18 +473,16 @@ impl UciEngine {
             })
         });
 
-        // Spawn search task that runs independently
         let pondering_clone = Arc::clone(&self.pondering);
         let expected_ponder_move = self.expected_ponder_move;
         let is_ponder_search = is_ponder;
         tokio::spawn(async move {
-            let mut best_move = fallback_move; // Start with a legal move
+            let mut best_move = fallback_move;
             let mut ponder_move = None;
             let mut best_depth = 0;
             let mut pv_index = 1;
             let mut last_depth = 0;
 
-            // Receive and print search info
             while let Some(event) = rx.recv().await {
                 if event.depth != last_depth {
                     pv_index = 1;
@@ -569,7 +556,6 @@ impl UciEngine {
             return;
         }
 
-        // Find "name" and "value" positions
         let name_start = 1;
         let mut name_end = name_start;
         let mut value_start = None;
@@ -672,7 +658,6 @@ impl UciEngine {
 }
 
 impl UciEngine {
-    // FFI helper methods for Android bindings
     #[allow(dead_code)]
     pub fn set_position_from_fen(&mut self, fen: &str) {
         self.board = Board::from_fen(fen);
@@ -682,7 +667,6 @@ impl UciEngine {
     
     #[allow(dead_code)]
     pub fn get_best_move(&self, _depth: u32) -> Option<String> {
-        // Placeholder - real implementation would need async support
         None
     }
     

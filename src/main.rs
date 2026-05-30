@@ -23,28 +23,22 @@ use clap::Parser;
 #[command(name = "z-slon")]
 #[command(about = "A chess engine with NNUE support", long_about = None)]
 struct Args {
-    /// Enable CLI mode (default is UCI mode)
     #[arg(long)]
     cli: bool,
     
-    /// Path to NNUE file
     #[arg(long)]
     nnue: Option<String>,
     
-    /// Path to Polyglot book file
     #[arg(long)]
     book: Option<String>,
     
-    /// Number of threads
     #[arg(long, default_value_t = 1)]
     threads: u32,
     
-    /// Enable debug output
     #[arg(long)]
     debug: bool,
 }
 
-// Global debug flag
 static DEBUG_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn is_debug_mode() -> bool {
@@ -91,13 +85,10 @@ impl EngineState {
 
 #[tokio::main]
 async fn main() {
-    // Parse command line arguments
     let args = Args::parse();
     
-    // Set debug mode
     set_debug_mode(args.debug);
     
-    // Initialize NNUE evaluator
     let nnue_evaluator = NnueEvaluator::new();
     if let Some(nnue_path) = &args.nnue {
         match nnue_evaluator.load(nnue_path) {
@@ -110,7 +101,6 @@ async fn main() {
         }
     }
     
-    // Default mode is UCI, unless --cli flag is provided
     if !args.cli {
         let mut uci_engine = uci::UciEngine::new_with_nnue(nnue_evaluator);
         uci_engine.set_threads(args.threads);
@@ -129,7 +119,6 @@ async fn main() {
     
     eprintln!("Welcome to z-slon! Type commands (`set`, `show`, `move`, `eval`, `start`, `stop`, `exit`).");
     
-    // Print NNUE status
     if is_debug_mode() {
         let nnue_guard = state.nnue.read().await;
         if nnue_guard.is_loaded() {
@@ -143,7 +132,6 @@ async fn main() {
     
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
     
-    // Spawn input reader task with rustyline
     let input_handle = tokio::task::spawn_blocking(move || {
         let mut rl = DefaultEditor::new().unwrap();
         loop {
@@ -166,7 +154,6 @@ async fn main() {
         }
     });
     
-    // Main command processing loop
     while let Some(command) = cmd_rx.recv().await {
         if command.eq_ignore_ascii_case("exit") || command.eq_ignore_ascii_case("quit") {
             cancel_flag.store(true, Ordering::SeqCst);
@@ -378,14 +365,12 @@ where
     let hash_after = board_guard.position_hash();
     drop(board_guard);
     
-    // Add the hashes to history
     {
         let mut hist = state.position_history.write().await;
         hist.push(hash_before);
         hist.push(hash_after);
     }
     
-    // Cancel current search and signal position change to restart eval immediately
     cancel_flag.store(true, Ordering::SeqCst);
     position_changed.store(true, Ordering::SeqCst);
     eprintln!("Move {} applied.", mv);
@@ -573,7 +558,6 @@ async fn run_continuous_search(
             break;
         }
         
-        // Reset position changed flag and cancel flag
         position_changed.store(false, Ordering::SeqCst);
         cancel_flag.store(false, Ordering::SeqCst);
         
@@ -606,7 +590,6 @@ async fn run_continuous_search(
             })
         });
 
-        // Print search progress
         let mut last_depth = 0;
         while let Some(event) = rx.recv().await {
             let mv_label = event
@@ -619,17 +602,14 @@ async fn run_continuous_search(
 
         let _ = handle.await;
         
-        // Check if we should stop
         if !eval_running.load(Ordering::SeqCst) {
             break;
         }
         
-        // If cancelled by stop command, exit
         if cancel_flag.load(Ordering::SeqCst) && !position_changed.load(Ordering::SeqCst) {
             break;
         }
         
-        // If we reached max depth without being cancelled, print full evaluation
         if last_depth == depth && !cancel_flag.load(Ordering::SeqCst) {
             let board_guard = board.read().await;
             let breakdown = evaluate(&*board_guard);
@@ -637,7 +617,6 @@ async fn run_continuous_search(
             print_evaluation(&breakdown);
         }
         
-        // If we reached max depth, wait for position change
         while eval_running.load(Ordering::SeqCst) && !position_changed.load(Ordering::SeqCst) {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

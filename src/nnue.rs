@@ -12,7 +12,6 @@ pub struct NnueEvaluator {
 
 impl NnueEvaluator {
     pub fn new() -> Self {
-        // Automatically enable embedded NNUE
         Self {
             enabled: Arc::new(RwLock::new(true)),
             path: Arc::new(RwLock::new(Some("<embedded>".to_string()))),
@@ -28,7 +27,6 @@ impl NnueEvaluator {
     }
 
     pub fn load(&self, path: &str) -> Result<(), String> {
-        // Timecat has built-in NNUE
         *self.enabled.write().unwrap() = true;
         *self.path.write().unwrap() = Some(path.to_string());
         Ok(())
@@ -47,15 +45,12 @@ impl NnueEvaluator {
             return None;
         }
         
-        // Convert our board to timecat board via FEN
         let fen = board.to_fen();
         let timecat_board = TimecatBoard::from_fen(&fen)
             .map_err(|_| ()).ok()?;
         
-        // Create position from board
         let position = timecat_board.get_position();
         
-        // Evaluate using NNUE (returns i16, convert to i32)
         let score = EvaluatorNNUE::slow_evaluate(position) as i32;
         
         Some(score)

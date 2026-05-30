@@ -1,6 +1,5 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 
 use crate::board::{Board, Piece};
 use crate::eval::evaluate_with_nnue;
@@ -14,13 +13,16 @@ const POS_INF: i32 = MATE_SCORE;
 const MAX_PLY: usize = 128;
 const MAX_KILLERS: usize = 2;
 
-// Search tuning constants
 const FUTILITY_MARGIN: i32 = 100;
 const REVERSE_FUTILITY_MARGIN: i32 = 80;
 const RAZORING_MARGIN: i32 = 300;
 const DELTA_MARGIN: i32 = 200;
 const ASPIRATION_WINDOW: i32 = 25;
 const IID_DEPTH: u32 = 6;
+
+const TT_BITS: usize = 22;
+const TT_SIZE: usize = 1 << TT_BITS;
+const TT_MASK: u64 = (TT_SIZE as u64) - 1;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SearchEvent {
@@ -42,22 +44,140 @@ enum TTFlag {
 
 #[derive(Clone, Copy, Debug)]
 struct TTEntry {
-    hash: u64,
     depth: u32,
     score: i32,
     flag: TTFlag,
     best_move: Option<Move>,
-    age: u8,
 }
 
-type TranspositionTable = Arc<Mutex<HashMap<u64, TTEntry>>>;
+struct TtSlot {
+    key: AtomicU64,
+    data: AtomicU64,
+}
 
-// Move ordering tables
+pub struct Tt {
+    slots: Vec<TtSlot>,
+}
+
+impl Tt {
+    fn new() -> Self {
+        let mut slots = Vec::with_capacity(TT_SIZE);
+        for _ in 0..TT_SIZE {
+            slots.push(TtSlot {
+                key: AtomicU64::new(0),
+                data: AtomicU64::new(0),
+            });
+        }
+        Self { slots }
+    }
+
+    fn probe(&self, hash: u64) -> Option<TTEntry> {
+        let idx = (hash & TT_MASK) as usize;
+        let slot = &self.slots[idx];
+        let data = slot.data.load(Ordering::Relaxed);
+        let key = slot.key.load(Ordering::Relaxed);
+        if data == 0 || (key ^ data) != hash {
+            return None;
+        }
+        Some(decode_entry(data))
+    }
+
+    fn store(&self, hash: u64, depth: u32, score: i32, flag: TTFlag, best_move: Option<Move>) {
+        let idx = (hash & TT_MASK) as usize;
+        let slot = &self.slots[idx];
+        let old_data = slot.data.load(Ordering::Relaxed);
+        if old_data != 0 {
+            let old_key = slot.key.load(Ordering::Relaxed);
+            let same = (old_key ^ old_data) == hash;
+            let old_depth = ((old_data >> 56) & 0xff) as u32;
+            if same && old_depth > depth && flag != TTFlag::Exact {
+                return;
+            }
+        }
+        let data = encode_entry(depth, score, flag, best_move);
+        slot.key.store(hash ^ data, Ordering::Relaxed);
+        slot.data.store(data, Ordering::Relaxed);
+    }
+}
+
+type TranspositionTable = Arc<Tt>;
+
+fn encode_move(mv: Option<Move>) -> u16 {
+    match mv {
+        None => 0,
+        Some(m) => {
+            let promo = match m.promotion {
+                None => 0u16,
+                Some(Piece::WKnight) | Some(Piece::BKnight) => 1,
+                Some(Piece::WBishop) | Some(Piece::BBishop) => 2,
+                Some(Piece::WRook) | Some(Piece::BRook) => 3,
+                Some(Piece::WQueen) | Some(Piece::BQueen) => 4,
+                _ => 0,
+            };
+            (m.from as u16) | ((m.to as u16) << 6) | (promo << 12)
+        }
+    }
+}
+
+fn decode_move(v: u16) -> Option<Move> {
+    if v == 0 {
+        return None;
+    }
+    let from = (v & 0x3f) as u8;
+    let to = ((v >> 6) & 0x3f) as u8;
+    let promo = (v >> 12) & 0x7;
+    let promotion = if promo == 0 {
+        None
+    } else {
+        let white = to / 8 == 7;
+        Some(match (promo, white) {
+            (1, true) => Piece::WKnight,
+            (1, false) => Piece::BKnight,
+            (2, true) => Piece::WBishop,
+            (2, false) => Piece::BBishop,
+            (3, true) => Piece::WRook,
+            (3, false) => Piece::BRook,
+            (4, true) => Piece::WQueen,
+            _ => Piece::BQueen,
+        })
+    };
+    Some(Move { from, to, promotion })
+}
+
+fn encode_entry(depth: u32, score: i32, flag: TTFlag, best_move: Option<Move>) -> u64 {
+    let m = encode_move(best_move) as u64;
+    let s = (score as u32) as u64;
+    let f = match flag {
+        TTFlag::Exact => 0u64,
+        TTFlag::Lower => 1,
+        TTFlag::Upper => 2,
+    };
+    let d = (depth as u64) & 0xff;
+    m | (s << 16) | (f << 48) | (d << 56)
+}
+
+fn decode_entry(data: u64) -> TTEntry {
+    let best_move = decode_move((data & 0xffff) as u16);
+    let score = ((data >> 16) & 0xffff_ffff) as u32 as i32;
+    let flag = match (data >> 48) & 0x3 {
+        0 => TTFlag::Exact,
+        1 => TTFlag::Lower,
+        _ => TTFlag::Upper,
+    };
+    let depth = ((data >> 56) & 0xff) as u32;
+    TTEntry {
+        depth,
+        score,
+        flag,
+        best_move,
+    }
+}
+
 #[derive(Clone)]
 struct SearchTables {
     killer_moves: [[Option<Move>; MAX_KILLERS]; MAX_PLY],
-    history: [[i32; 64]; 64], // [from][to]
-    counter_moves: [[Option<Move>; 64]; 64], // [from][to] -> countermove
+    history: [[i32; 64]; 64],
+    counter_moves: [[Option<Move>; 64]; 64],
 }
 
 impl SearchTables {
@@ -69,22 +189,13 @@ impl SearchTables {
         }
     }
 
-    #[allow(dead_code)]
-    fn clear(&mut self) {
-        self.killer_moves = [[None; MAX_KILLERS]; MAX_PLY];
-        self.history = [[0; 64]; 64];
-        self.counter_moves = [[None; 64]; 64];
-    }
-
     fn update_killer(&mut self, ply: usize, mv: Move) {
         if ply >= MAX_PLY {
             return;
         }
-        // Don't add duplicates
         if self.killer_moves[ply][0] == Some(mv) {
             return;
         }
-        // Shift killers
         self.killer_moves[ply][1] = self.killer_moves[ply][0];
         self.killer_moves[ply][0] = Some(mv);
     }
@@ -93,10 +204,8 @@ impl SearchTables {
         let from = mv.from as usize;
         let to = mv.to as usize;
         let delta = (depth * depth) as i32;
-        
         if bonus {
             self.history[from][to] += delta;
-            // Cap history values
             if self.history[from][to] > 10000 {
                 self.history[from][to] = 10000;
             }
@@ -140,7 +249,7 @@ pub fn search_position(
 ) {
     let threads = threads.max(1).min(64);
     let nodes = Arc::new(AtomicU64::new(0));
-    let tt: TranspositionTable = Arc::new(Mutex::new(HashMap::new()));
+    let tt: TranspositionTable = Arc::new(Tt::new());
     let mut position_history = position_history;
     if position_history.is_empty() || position_history.last() != Some(&board.position_hash()) {
         position_history.push(board.position_hash());
@@ -160,11 +269,9 @@ pub fn search_position(
         return;
     }
 
-    // Shared state for best result across all threads
     let best_result = Arc::new(Mutex::new((None, 0, [None; 32])));
-    
+
     if threads == 1 {
-        // Single-threaded search
         search_single_thread(
             board,
             depth,
@@ -177,7 +284,6 @@ pub fn search_position(
             &mut on_progress,
         );
     } else {
-        // Multi-threaded Lazy SMP search
         search_lazy_smp(
             board,
             depth,
@@ -214,10 +320,10 @@ fn search_single_thread(
         }
 
         let mut excluded_moves = Vec::new();
-        
+
         for pv_idx in 0..multi_pv {
             let prev_score = prev_scores.get(pv_idx).copied().unwrap_or(0);
-            
+
             let (depth_move, depth_score, pv) = search_root_aspiration(
                 &board,
                 current_depth,
@@ -232,12 +338,12 @@ fn search_single_thread(
             );
 
             let was_cancelled = cancel_flag.load(Ordering::Relaxed);
-            
+
             if !was_cancelled && depth_move.is_some() {
                 if pv_idx < prev_scores.len() {
                     prev_scores[pv_idx] = depth_score;
                 }
-                
+
                 let event = SearchEvent {
                     depth: current_depth,
                     seldepth: current_depth,
@@ -248,17 +354,17 @@ fn search_single_thread(
                     pv_len: pv.iter().take_while(|m| m.is_some()).count(),
                 };
                 on_progress(event);
-                
+
                 if let Some(mv) = depth_move {
                     excluded_moves.push(mv);
                 }
             }
-            
+
             if was_cancelled {
                 break;
             }
         }
-        
+
         if cancel_flag.load(Ordering::Relaxed) {
             break;
         }
@@ -279,10 +385,9 @@ fn search_lazy_smp(
     on_progress: &mut impl FnMut(SearchEvent),
 ) {
     use std::thread;
-    
+
     let mut handles = vec![];
-    
-    // Spawn helper threads (threads - 1, main thread will also search)
+
     for thread_id in 1..threads {
         let board = board.clone();
         let nodes = Arc::clone(nodes);
@@ -291,7 +396,7 @@ fn search_lazy_smp(
         let cancel_flag = Arc::clone(cancel_flag);
         let nnue = nnue.clone();
         let best_result = Arc::clone(best_result);
-        
+
         let handle = thread::spawn(move || {
             helper_thread_search(
                 board,
@@ -306,11 +411,10 @@ fn search_lazy_smp(
                 &best_result,
             );
         });
-        
+
         handles.push(handle);
     }
-    
-    // Main thread searches too (thread_id = 0)
+
     main_thread_search(
         board,
         depth,
@@ -323,8 +427,7 @@ fn search_lazy_smp(
         best_result,
         on_progress,
     );
-    
-    // Wait for all helper threads to finish
+
     for handle in handles {
         let _ = handle.join();
     }
@@ -351,10 +454,10 @@ fn main_thread_search(
         }
 
         let mut excluded_moves = Vec::new();
-        
+
         for pv_idx in 0..multi_pv {
             let prev_score = prev_scores.get(pv_idx).copied().unwrap_or(0);
-            
+
             let (depth_move, depth_score, pv) = search_root_aspiration(
                 &board,
                 current_depth,
@@ -369,13 +472,12 @@ fn main_thread_search(
             );
 
             let was_cancelled = cancel_flag.load(Ordering::Relaxed);
-            
+
             if !was_cancelled && depth_move.is_some() {
                 if pv_idx < prev_scores.len() {
                     prev_scores[pv_idx] = depth_score;
                 }
-                
-                // Update shared best result with first PV line
+
                 if pv_idx == 0 {
                     if let Ok(mut best) = best_result.try_lock() {
                         if best.0.is_none() || depth_score > best.1 {
@@ -383,7 +485,7 @@ fn main_thread_search(
                         }
                     }
                 }
-                
+
                 let event = SearchEvent {
                     depth: current_depth,
                     seldepth: current_depth,
@@ -394,17 +496,17 @@ fn main_thread_search(
                     pv_len: pv.iter().take_while(|m| m.is_some()).count(),
                 };
                 on_progress(event);
-                
+
                 if let Some(mv) = depth_move {
                     excluded_moves.push(mv);
                 }
             }
-            
+
             if was_cancelled {
                 break;
             }
         }
-        
+
         if cancel_flag.load(Ordering::Relaxed) {
             break;
         }
@@ -425,17 +527,14 @@ fn helper_thread_search(
 ) {
     let mut prev_scores = vec![0; multi_pv];
     let mut tables = SearchTables::new();
-    
-    // Lazy SMP: Each helper thread searches with slight depth variation
-    // This creates diversity and better tree coverage
-    let depth_offset = (thread_id % 3) as i32 - 1; // -1, 0, or +1
+
+    let depth_offset = (thread_id % 3) as i32 - 1;
 
     for current_depth in 1..=depth {
         if current_depth > 1 && cancel_flag.load(Ordering::Relaxed) {
             break;
         }
-        
-        // Apply depth variation for diversity
+
         let search_depth = if current_depth > 3 {
             ((current_depth as i32 + depth_offset).max(1) as u32).min(depth)
         } else {
@@ -443,11 +542,11 @@ fn helper_thread_search(
         };
 
         let mut excluded_moves = Vec::new();
-        
+
         for pv_idx in 0..multi_pv {
             let prev_score = prev_scores.get(pv_idx).copied().unwrap_or(0);
-            
-            let (depth_move, depth_score, pv) = search_root_aspiration(
+
+            let (depth_move, depth_score, _pv) = search_root_aspiration(
                 &board,
                 search_depth,
                 prev_score,
@@ -461,31 +560,30 @@ fn helper_thread_search(
             );
 
             let was_cancelled = cancel_flag.load(Ordering::Relaxed);
-            
+
             if !was_cancelled && depth_move.is_some() {
                 if pv_idx < prev_scores.len() {
                     prev_scores[pv_idx] = depth_score;
                 }
-                
-                // Update shared best result with first PV line only
+
                 if pv_idx == 0 {
                     if let Ok(mut best) = best_result.try_lock() {
                         if best.0.is_none() || depth_score > best.1 {
-                            *best = (depth_move, depth_score, pv);
+                            *best = (depth_move, depth_score, _pv);
                         }
                     }
                 }
-                
+
                 if let Some(mv) = depth_move {
                     excluded_moves.push(mv);
                 }
             }
-            
+
             if was_cancelled {
                 break;
             }
         }
-        
+
         if cancel_flag.load(Ordering::Relaxed) {
             break;
         }
@@ -510,7 +608,6 @@ fn search_root_aspiration(
     let mut beta = prev_score + ASPIRATION_WINDOW;
     let mut delta = ASPIRATION_WINDOW;
 
-    // Use full window for first few depths or if previous score was extreme
     if depth <= 5 || prev_score.abs() > 500 {
         alpha = NEG_INF;
         beta = POS_INF;
@@ -518,25 +615,21 @@ fn search_root_aspiration(
 
     loop {
         let (mv, score, pv) = search_root(board, depth, alpha, beta, nodes, tt, position_history, cancel_flag, nnue, tables, excluded_moves);
-        
+
         if cancel_flag.load(Ordering::Relaxed) {
             return (mv, score, pv);
         }
 
         if score <= alpha {
-            // Fail low - widen down
             alpha -= delta;
             delta *= 2;
         } else if score >= beta {
-            // Fail high - widen up
             beta += delta;
             delta *= 2;
         } else {
-            // Score within window
             return (mv, score, pv);
         }
 
-        // If delta gets too large, just use full window
         if delta > 400 {
             alpha = NEG_INF;
             beta = POS_INF;
@@ -561,7 +654,7 @@ fn search_root(
     if moves.is_empty() {
         return (None, terminal_score(board, 0), [None; 32]);
     }
-    
+
     if !excluded_moves.is_empty() {
         moves.retain(|m| !excluded_moves.contains(m));
         if moves.is_empty() {
@@ -570,7 +663,7 @@ fn search_root(
     }
 
     let hash = board.position_hash();
-    let tt_move = probe_tt(tt, hash, 0, NEG_INF, POS_INF).and_then(|e| e.best_move);
+    let tt_move = probe_tt(tt, hash).and_then(|e| e.best_move);
     order_moves(board, &mut moves, tt_move, None, 0, tables);
 
     let mut best_move = None;
@@ -586,15 +679,13 @@ fn search_root(
         let mut next = board.clone();
         apply_move(&mut next, mv);
 
-        // Check if this move leads to repetition
         let next_hash = next.position_hash();
         let repetition_count = count_repetitions(position_history, next_hash);
-        
+
         if repetition_count >= 2 {
-            continue; // Forbid 3-fold repetition
+            continue;
         }
 
-        // Check if opponent can force 3-fold repetition
         if repetition_count >= 1 {
             let opponent_moves = legal_moves(&next);
             let mut can_force = false;
@@ -608,18 +699,22 @@ fn search_root(
                 }
             }
             if can_force {
-                continue; // Forbid moves that allow opponent to force 3-fold
+                continue;
             }
         }
+
+        let gives_check = is_in_check(&next, next.is_white_to_move());
+        let extension = if gives_check { 1 } else { 0 };
+        let child_depth = depth - 1 + extension;
 
         position_history.push(next_hash);
 
         let score = if i == 0 {
-            -pvs(&next, depth - 1, -beta, -alpha, nodes, 1, tt, cancel_flag, nnue, &mut pv_line, position_history, tables, None)
+            -pvs(&next, child_depth, -beta, -alpha, nodes, 1, tt, cancel_flag, nnue, &mut pv_line, position_history, tables, None)
         } else {
-            let mut null_score = -pvs(&next, depth - 1, -alpha - 1, -alpha, nodes, 1, tt, cancel_flag, nnue, &mut pv_line, position_history, tables, None);
+            let mut null_score = -pvs(&next, child_depth, -alpha - 1, -alpha, nodes, 1, tt, cancel_flag, nnue, &mut pv_line, position_history, tables, None);
             if null_score > alpha && null_score < beta {
-                null_score = -pvs(&next, depth - 1, -beta, -alpha, nodes, 1, tt, cancel_flag, nnue, &mut pv_line, position_history, tables, None);
+                null_score = -pvs(&next, child_depth, -beta, -alpha, nodes, 1, tt, cancel_flag, nnue, &mut pv_line, position_history, tables, None);
             }
             null_score
         };
@@ -638,7 +733,6 @@ fn search_root(
         if score > alpha {
             alpha = score;
             if alpha >= beta {
-                // Update history for beta cutoff
                 let is_quiet = !is_capture(board, mv);
                 if is_quiet {
                     tables.update_history(mv, depth, true);
@@ -649,7 +743,7 @@ fn search_root(
     }
 
     if let Some(mv) = best_move {
-        store_tt(tt, board.position_hash(), depth, best_score, TTFlag::Exact, Some(mv), 0);
+        store_tt(tt, board.position_hash(), depth, best_score, TTFlag::Exact, Some(mv));
     }
 
     (best_move, best_score, best_pv)
@@ -677,7 +771,6 @@ fn pvs(
     let is_pv = beta - alpha > 1;
     pv_line[0] = None;
 
-    // Draw detection
     if board.is_draw_by_fifty_move() || board.is_insufficient_material() {
         return 0;
     }
@@ -685,7 +778,7 @@ fn pvs(
     nodes.fetch_add(1, Ordering::Relaxed);
 
     let hash = board.position_hash();
-    
+
     if let Some(entry) = probe_tt_cutoff(tt, hash, depth, alpha, beta) {
         return entry.score;
     }
@@ -705,7 +798,6 @@ fn pvs(
         static_eval_with_nnue(board, nnue)
     };
 
-    // Razoring
     if !is_pv && !in_check && depth <= 3 {
         let razor_margin = RAZORING_MARGIN * depth as i32;
         if static_eval + razor_margin < alpha {
@@ -716,7 +808,6 @@ fn pvs(
         }
     }
 
-    // Reverse futility pruning (static null move pruning)
     if !is_pv && !in_check && depth <= 7 && has_non_pawn_material(board) {
         let rfp_margin = REVERSE_FUTILITY_MARGIN * depth as i32;
         if static_eval - rfp_margin >= beta {
@@ -724,16 +815,13 @@ fn pvs(
         }
     }
 
-    // Null move pruning with adaptive R
     if !is_pv && !in_check && depth >= 3 && has_non_pawn_material(board) && static_eval >= beta {
         let mut null_board = board.clone();
         null_board.white_to_move = !null_board.white_to_move;
-        // Adaptive R based on depth
         let r = if depth >= 6 { 3 } else { 2 };
         let null_depth = depth.saturating_sub(1 + r);
         let null_score = -pvs(&null_board, null_depth, -beta, -beta + 1, nodes, ply + 1, tt, cancel_flag, nnue, &mut [None; 32], position_history, tables, None);
         if null_score >= beta {
-            // Verification search for zugzwang at high depths
             if depth >= 12 {
                 let verify_depth = depth.saturating_sub(r + 3);
                 let verify_score = pvs(board, verify_depth, beta - 1, beta, nodes, ply, tt, cancel_flag, nnue, &mut [None; 32], position_history, tables, prev_move);
@@ -746,12 +834,11 @@ fn pvs(
         }
     }
 
-    // Internal iterative deepening
-    let mut tt_move = probe_tt(tt, hash, 0, NEG_INF, POS_INF).and_then(|e| e.best_move);
+    let mut tt_move = probe_tt(tt, hash).and_then(|e| e.best_move);
     if is_pv && tt_move.is_none() && depth >= IID_DEPTH {
         let iid_depth = depth.saturating_sub(2);
         pvs(board, iid_depth, alpha, beta, nodes, ply, tt, cancel_flag, nnue, &mut [None; 32], position_history, tables, prev_move);
-        tt_move = probe_tt(tt, hash, 0, NEG_INF, POS_INF).and_then(|e| e.best_move);
+        tt_move = probe_tt(tt, hash).and_then(|e| e.best_move);
     }
 
     let mut moves = legal_moves(board);
@@ -780,7 +867,6 @@ fn pvs(
         let is_quiet = !is_capture(board, mv);
         let gives_check = is_in_check(&next, next.is_white_to_move());
 
-        // Futility pruning
         if !is_pv && !in_check && !gives_check && is_quiet && depth <= 7 && i > 0 {
             let futility_margin = FUTILITY_MARGIN * depth as i32;
             if static_eval + futility_margin <= alpha {
@@ -789,7 +875,6 @@ fn pvs(
             }
         }
 
-        // SEE pruning for quiet moves
         if !is_pv && !in_check && is_quiet && depth <= 8 && i > 0 {
             if see(board, mv) < -(30 * depth as i32) {
                 position_history.pop();
@@ -797,41 +882,36 @@ fn pvs(
             }
         }
 
+        let extension = if gives_check { 1 } else { 0 };
+        let child_depth = depth - 1 + extension;
+
         let mut reduction = 0;
 
-        // Late move reductions with improved conditions
         if i >= 3 && depth >= 3 && is_quiet && !in_check && !gives_check {
-            // Formula: log(depth) * log(move_number)
             reduction = ((depth as f32).ln() * (i as f32).ln() / 2.0) as u32;
-            
-            // Adjust reduction based on history score
+
             let history_score = tables.get_history(mv);
             if history_score < 0 {
-                reduction += 1; // Reduce more for bad history
+                reduction += 1;
             } else if history_score > 5000 {
-                reduction = reduction.saturating_sub(1); // Reduce less for good history
+                reduction = reduction.saturating_sub(1);
             }
-            
-            // Don't reduce too much
-            reduction = reduction.min(depth - 2);
+
+            reduction = reduction.min(child_depth.saturating_sub(1));
         }
 
         let score = if i == 0 {
-            // First move: full window search
-            -pvs(&next, depth - 1, -beta, -alpha, nodes, ply + 1, tt, cancel_flag, nnue, &mut child_pv, position_history, tables, Some(mv))
+            -pvs(&next, child_depth, -beta, -alpha, nodes, ply + 1, tt, cancel_flag, nnue, &mut child_pv, position_history, tables, Some(mv))
         } else {
-            // Other moves: zero-window search with LMR
-            let reduced_depth = depth.saturating_sub(1 + reduction);
+            let reduced_depth = child_depth.saturating_sub(reduction);
             let mut null_score = -pvs(&next, reduced_depth, -alpha - 1, -alpha, nodes, ply + 1, tt, cancel_flag, nnue, &mut child_pv, position_history, tables, Some(mv));
-            
-            // Re-search at full depth if reduction was applied and score > alpha
+
             if null_score > alpha && reduction > 0 {
-                null_score = -pvs(&next, depth - 1, -alpha - 1, -alpha, nodes, ply + 1, tt, cancel_flag, nnue, &mut child_pv, position_history, tables, Some(mv));
+                null_score = -pvs(&next, child_depth, -alpha - 1, -alpha, nodes, ply + 1, tt, cancel_flag, nnue, &mut child_pv, position_history, tables, Some(mv));
             }
-            
-            // Re-search with full window if score is between alpha and beta
+
             if null_score > alpha && null_score < beta {
-                null_score = -pvs(&next, depth - 1, -beta, -alpha, nodes, ply + 1, tt, cancel_flag, nnue, &mut child_pv, position_history, tables, Some(mv));
+                null_score = -pvs(&next, child_depth, -beta, -alpha, nodes, ply + 1, tt, cancel_flag, nnue, &mut child_pv, position_history, tables, Some(mv));
             }
             null_score
         };
@@ -849,7 +929,7 @@ fn pvs(
             if score > alpha {
                 alpha = score;
                 flag = TTFlag::Exact;
-                
+
                 pv_line[0] = Some(mv);
                 for j in 0..31 {
                     pv_line[j + 1] = child_pv[j];
@@ -857,18 +937,15 @@ fn pvs(
 
                 if alpha >= beta {
                     flag = TTFlag::Lower;
-                    
-                    // Update killer and history heuristics
+
                     if is_quiet {
                         tables.update_killer(ply as usize, mv);
                         tables.update_history(mv, depth, true);
-                        
-                        // Update countermove
+
                         if let Some(pm) = prev_move {
                             tables.set_counter_move(pm, mv);
                         }
-                        
-                        // Penalize other quiet moves that didn't cause beta cutoff
+
                         for &tried in &quiets_tried {
                             if tried != mv {
                                 tables.update_history(tried, depth, false);
@@ -881,7 +958,7 @@ fn pvs(
         }
     }
 
-    store_tt(tt, hash, depth, best_score, flag, best_move, 0);
+    store_tt(tt, hash, depth, best_score, flag, best_move);
     best_score
 }
 
@@ -900,33 +977,33 @@ fn quiescence(
     }
 
     nodes.fetch_add(1, Ordering::Relaxed);
-    
+
     let hash = board.position_hash();
     if count_repetitions(position_history, hash) >= 2 {
         return 0;
     }
-    
+
     let in_check = is_in_check(board, board.is_white_to_move());
     let stand_pat = if in_check {
         NEG_INF
     } else {
         static_eval_with_nnue(board, nnue)
     };
-    
+
     if !in_check && stand_pat >= beta {
         return beta;
     }
-    
+
     if !in_check && stand_pat > alpha {
         alpha = stand_pat;
     }
 
     let mut moves = legal_moves(board);
-    
+
     if !in_check {
         moves.retain(|&mv| is_capture(board, mv));
     }
-    
+
     if moves.is_empty() {
         if in_check {
             return terminal_score(board, ply);
@@ -934,7 +1011,6 @@ fn quiescence(
         return stand_pat;
     }
 
-    // Simple move ordering for quiescence
     moves.sort_by_cached_key(|&mv| {
         let victim = board.square(mv.to);
         let attacker = board.square(mv.from);
@@ -948,15 +1024,13 @@ fn quiescence(
             break;
         }
 
-        // Delta pruning: if even capturing the best piece can't raise alpha, skip
         if !in_check {
             let victim = board.square(mv.to);
             let capture_value = piece_value_simple(victim) * 100;
             if stand_pat + capture_value + DELTA_MARGIN < alpha {
                 continue;
             }
-            
-            // SEE pruning in qsearch
+
             if see(board, mv) < 0 {
                 continue;
             }
@@ -964,17 +1038,17 @@ fn quiescence(
 
         let mut next = board.clone();
         apply_move(&mut next, mv);
-        
+
         position_history.push(next.position_hash());
-        
+
         let score = -quiescence(&next, -beta, -alpha, nodes, ply + 1, cancel_flag, nnue, position_history);
-        
+
         position_history.pop();
-        
+
         if score >= beta {
             return beta;
         }
-        
+
         if score > alpha {
             alpha = score;
         }
@@ -992,62 +1066,52 @@ fn order_moves(
     tables: &SearchTables,
 ) {
     moves.sort_by_cached_key(|&mv| {
-        // TT move gets highest priority
         if Some(mv) == tt_move {
             return -10_000_000;
         }
 
         let is_capture_move = is_capture(board, mv);
-        
-        // Captures ordered by MVV-LVA and SEE
+
         if is_capture_move {
             let victim = board.square(mv.to);
             let attacker = board.square(mv.from);
             let victim_val = piece_value_simple(victim);
             let attacker_val = piece_value_simple(attacker);
             let mvv_lva = victim_val * 10 - attacker_val;
-            
-            // Good captures (positive SEE)
+
             let see_score = see(board, mv);
             if see_score >= 0 {
                 return -(1_000_000 + mvv_lva * 100 + see_score);
             } else {
-                // Bad captures go after killers but before quiet moves
                 return -(100_000 + mvv_lva * 100);
             }
         }
 
-        // Killer moves
         if tables.is_killer(ply, mv) {
             return -500_000;
         }
 
-        // Counter move
         if let Some(pm) = prev_move {
             if Some(mv) == tables.get_counter_move(pm) {
                 return -400_000;
             }
         }
 
-        // History heuristic
         let history = tables.get_history(mv);
         -(history)
     });
 }
 
-// Static Exchange Evaluation - estimates the value of a capture sequence
 fn see(board: &Board, mv: Move) -> i32 {
     let from = mv.from;
     let to = mv.to;
-    
+
     let mut gain = vec![0i32];
     let mut attacker = board.square(from);
     let victim = board.square(to);
-    
-    // Initial capture value
+
     gain.push(piece_value_simple(victim));
-    
-    // Handle en passant
+
     if matches!(attacker, Piece::WPawn | Piece::BPawn) {
         if board.en_passant_file().is_some() && victim == Piece::Empty {
             let diff = (from as i8 - to as i8).abs();
@@ -1056,8 +1120,7 @@ fn see(board: &Board, mv: Move) -> i32 {
             }
         }
     }
-    
-    // Simulate the exchange
+
     let mut attacking_side = !board.is_white_to_move();
     let mut occupied = 0u64;
     for i in 0..64 {
@@ -1065,32 +1128,29 @@ fn see(board: &Board, mv: Move) -> i32 {
             occupied |= 1u64 << i;
         }
     }
-    occupied ^= 1u64 << from; // Remove the initial attacker
-    
+    occupied ^= 1u64 << from;
+
     let mut d = 1;
-    
-    // Find next least valuable attacker
+
     while d < 16 {
         let next_attacker = find_least_valuable_attacker(board, to, attacking_side, occupied);
         if next_attacker.is_none() {
             break;
         }
-        
+
         let (attacker_sq, attacker_piece) = next_attacker.unwrap();
         occupied ^= 1u64 << attacker_sq;
-        
+
         gain.push(piece_value_simple(attacker) - gain[d]);
         attacker = attacker_piece;
         attacking_side = !attacking_side;
         d += 1;
-        
-        // Stop if king is captured (invalid)
+
         if matches!(attacker, Piece::WKing | Piece::BKing) {
             break;
         }
     }
-    
-    // Negamax the gain array
+
     for i in (1..gain.len()).rev() {
         if i % 2 == 1 {
             gain[i - 1] = gain[i - 1].max(-gain[i]);
@@ -1098,7 +1158,7 @@ fn see(board: &Board, mv: Move) -> i32 {
             gain[i - 1] = gain[i - 1].min(-gain[i]);
         }
     }
-    
+
     gain[0]
 }
 
@@ -1108,31 +1168,29 @@ fn find_least_valuable_attacker(
     side: bool,
     occupied: u64,
 ) -> Option<(u8, Piece)> {
-    // Try to find attackers in order: pawn, knight, bishop, rook, queen, king
     let piece_order = if side {
         vec![Piece::WPawn, Piece::WKnight, Piece::WBishop, Piece::WRook, Piece::WQueen, Piece::WKing]
     } else {
         vec![Piece::BPawn, Piece::BKnight, Piece::BBishop, Piece::BRook, Piece::BQueen, Piece::BKing]
     };
-    
+
     for piece_type in piece_order {
         for sq in 0..64 {
             if (occupied & (1u64 << sq)) == 0 {
                 continue;
             }
-            
+
             let piece = board.square(sq);
             if piece != piece_type {
                 continue;
             }
-            
-            // Check if this piece can attack the target
+
             if can_piece_attack(board, sq, target, piece, occupied) {
                 return Some((sq, piece));
             }
         }
     }
-    
+
     None
 }
 
@@ -1141,32 +1199,24 @@ fn can_piece_attack(_board: &Board, from: u8, to: u8, piece: Piece, occupied: u6
     let from_file = from % 8;
     let to_rank = to / 8;
     let to_file = to % 8;
-    
+
     let rank_diff = (to_rank as i8 - from_rank as i8).abs();
     let file_diff = (to_file as i8 - from_file as i8).abs();
-    
+
     match piece {
-        Piece::WPawn => {
-            to_rank as i8 - from_rank as i8 == 1 && file_diff == 1
-        }
-        Piece::BPawn => {
-            from_rank as i8 - to_rank as i8 == 1 && file_diff == 1
-        }
+        Piece::WPawn => to_rank as i8 - from_rank as i8 == 1 && file_diff == 1,
+        Piece::BPawn => from_rank as i8 - to_rank as i8 == 1 && file_diff == 1,
         Piece::WKnight | Piece::BKnight => {
             (rank_diff == 2 && file_diff == 1) || (rank_diff == 1 && file_diff == 2)
         }
-        Piece::WBishop | Piece::BBishop => {
-            rank_diff == file_diff && is_path_clear(from, to, occupied)
-        }
+        Piece::WBishop | Piece::BBishop => rank_diff == file_diff && is_path_clear(from, to, occupied),
         Piece::WRook | Piece::BRook => {
             (from_rank == to_rank || from_file == to_file) && is_path_clear(from, to, occupied)
         }
         Piece::WQueen | Piece::BQueen => {
             (rank_diff == file_diff || from_rank == to_rank || from_file == to_file) && is_path_clear(from, to, occupied)
         }
-        Piece::WKing | Piece::BKing => {
-            rank_diff <= 1 && file_diff <= 1
-        }
+        Piece::WKing | Piece::BKing => rank_diff <= 1 && file_diff <= 1,
         Piece::Empty => false,
     }
 }
@@ -1176,13 +1226,13 @@ fn is_path_clear(from: u8, to: u8, occupied: u64) -> bool {
     let from_file = from % 8;
     let to_rank = to / 8;
     let to_file = to % 8;
-    
+
     let rank_step = (to_rank as i8 - from_rank as i8).signum();
     let file_step = (to_file as i8 - from_file as i8).signum();
-    
+
     let mut current_rank = from_rank as i8 + rank_step;
     let mut current_file = from_file as i8 + file_step;
-    
+
     while current_rank != to_rank as i8 || current_file != to_file as i8 {
         let sq = (current_rank as u8) * 8 + (current_file as u8);
         if (occupied & (1u64 << sq)) != 0 {
@@ -1191,7 +1241,7 @@ fn is_path_clear(from: u8, to: u8, occupied: u64) -> bool {
         current_rank += rank_step;
         current_file += file_step;
     }
-    
+
     true
 }
 
@@ -1251,21 +1301,13 @@ fn has_non_pawn_material(board: &Board) -> bool {
     false
 }
 
-fn probe_tt(tt: &TranspositionTable, hash: u64, _depth: u32, _alpha: i32, _beta: i32) -> Option<TTEntry> {
-    let table = tt.lock().ok()?;
-    let entry = table.get(&hash).copied()?;
-    drop(table);
-    
-    if entry.hash != hash {
-        return None;
-    }
-
-    Some(entry)
+fn probe_tt(tt: &TranspositionTable, hash: u64) -> Option<TTEntry> {
+    tt.probe(hash)
 }
 
 fn probe_tt_cutoff(tt: &TranspositionTable, hash: u64, depth: u32, alpha: i32, beta: i32) -> Option<TTEntry> {
-    let entry = probe_tt(tt, hash, depth, alpha, beta)?;
-    
+    let entry = tt.probe(hash)?;
+
     if entry.depth >= depth {
         match entry.flag {
             TTFlag::Exact => return Some(entry),
@@ -1278,32 +1320,10 @@ fn probe_tt_cutoff(tt: &TranspositionTable, hash: u64, depth: u32, alpha: i32, b
     None
 }
 
-fn store_tt(tt: &TranspositionTable, hash: u64, depth: u32, score: i32, flag: TTFlag, best_move: Option<Move>, age: u8) {
-    if let Ok(mut table) = tt.lock() {
-        // Replacement strategy: replace if deeper, same depth, or much older
-        let should_replace = if let Some(existing) = table.get(&hash) {
-            existing.hash != hash || // Hash collision
-            depth >= existing.depth || // Deeper search
-            age.wrapping_sub(existing.age) > 3 // Much older entry
-        } else {
-            true
-        };
-        
-        if should_replace {
-            let entry = TTEntry {
-                hash,
-                depth,
-                score,
-                flag,
-                best_move,
-                age,
-            };
-            table.insert(hash, entry);
-        }
-    }
+fn store_tt(tt: &TranspositionTable, hash: u64, depth: u32, score: i32, flag: TTFlag, best_move: Option<Move>) {
+    tt.store(hash, depth, score, flag, best_move);
 }
 
 fn count_repetitions(hist: &Vec<u64>, hash: u64) -> usize {
     hist.iter().filter(|&&h| h == hash).count()
 }
-

@@ -105,10 +105,10 @@ pub fn apply_move(board: &mut Board, mv: Move) {
 
     if is_castling {
         let (rook_from, rook_to) = match mv.to {
-            6 => (7, 5),   // White king-side
-            2 => (0, 3),   // White queen-side
-            62 => (63, 61), // Black king-side
-            58 => (56, 59), // Black queen-side
+            6 => (7, 5),
+            2 => (0, 3),
+            62 => (63, 61),
+            58 => (56, 59),
             _ => unreachable!("Invalid castling move destination"),
         };
         let rook_idx = if moving_white { 3 } else { 9 };
@@ -289,8 +289,7 @@ fn generate_pawn_moves(board: &Board, white: bool) -> Vec<Move> {
             if (from / 8) as usize == ep_rank {
                 let from_file = (from % 8) as i8;
                 if (from_file - ep_file as i8).abs() == 1 {
-                    // Calculate the correct en passant target square
-                    let ep_target_rank = if white { 5 } else { 2 }; // Rank where pawn lands after en passant
+                    let ep_target_rank = if white { 5 } else { 2 };
                     let to = ep_target_rank * 8 + ep_file;
                     moves.push(Move {
                         from,

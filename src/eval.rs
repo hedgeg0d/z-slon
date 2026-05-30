@@ -43,18 +43,15 @@ pub fn evaluate(board: &Board) -> EvaluationBreakdown {
     evaluate_hce(board)
 }
 
-/// Evaluate using NNUE if available, otherwise fall back to HCE
 pub fn evaluate_with_nnue(board: &Board, nnue: &Option<NnueEvaluator>) -> i32 {
     if let Some(evaluator) = nnue {
         if let Some(score) = evaluator.evaluate(board) {
             return score;
         }
     }
-    // Fallback to HCE
     evaluate_hce(board).total
 }
 
-/// Hand-Crafted Evaluation (HCE) - the original evaluation function
 pub fn evaluate_hce(board: &Board) -> EvaluationBreakdown {
     let mut material = 0;
     let mut pst = 0;

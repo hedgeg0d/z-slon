@@ -1,14 +1,10 @@
-//! Integration with polyglot-rs crate for opening book support.
 
 use crate::board::{Board, Piece as BoardPiece};
 use crate::movegen::Move;
 
-// Re-export from polyglot-book-rs crate
 pub use polyglot_book_rs::{PolyglotBook, PolyglotMove};
 use polyglot_book_rs::{BoardPosition, types::Piece as PolyglotPiece};
 
-/// Implementation of BoardPosition trait for our Board struct.
-/// This allows the polyglot-rs crate to work directly with our board representation.
 impl BoardPosition for Board {
     fn piece_at(&self, square: u8) -> PolyglotPiece {
         let board_piece = self.square(square);
@@ -28,7 +24,6 @@ impl BoardPosition for Board {
     }
 }
 
-/// Convert our internal Piece enum to polyglot-rs Piece enum.
 fn convert_board_piece_to_polyglot(piece: BoardPiece) -> PolyglotPiece {
     match piece {
         BoardPiece::WPawn => PolyglotPiece::WPawn,
@@ -47,7 +42,6 @@ fn convert_board_piece_to_polyglot(piece: BoardPiece) -> PolyglotPiece {
     }
 }
 
-/// Convert polyglot-rs Piece enum to our internal Piece enum.
 fn convert_polyglot_piece_to_board(piece: PolyglotPiece) -> BoardPiece {
     match piece {
         PolyglotPiece::WPawn => BoardPiece::WPawn,
@@ -66,7 +60,6 @@ fn convert_polyglot_piece_to_board(piece: PolyglotPiece) -> BoardPiece {
     }
 }
 
-/// Convert PolyglotMove to our internal Move struct.
 pub fn convert_polyglot_move_to_move(polyglot_move: &PolyglotMove) -> Move {
     let promotion = polyglot_move.promotion.map(convert_polyglot_piece_to_board);
     Move {
@@ -76,27 +69,21 @@ pub fn convert_polyglot_move_to_move(polyglot_move: &PolyglotMove) -> Move {
     }
 }
 
-/// Enhanced PolyglotBook wrapper with optimized methods for our engine.
 pub struct OptimizedPolyglotBook {
     book: PolyglotBook,
 }
 
 impl OptimizedPolyglotBook {
-    /// Load a Polyglot book from file.
     pub fn load(path: &str) -> std::io::Result<Self> {
         let book = PolyglotBook::load(path)?;
         Ok(Self { book })
     }
 
-    /// Get the best move for a board position.
-    /// This is the most optimized method for your engine - no FEN conversion needed.
     pub fn get_best_move(&self, board: &Board) -> Option<Move> {
         self.book.get_best_move(board)
             .map(|entry| convert_polyglot_move_to_move(&entry.chess_move))
     }
 
-    /// Get all moves for a position with their weights.
-    /// Returns moves sorted by weight (highest first).
     #[allow(dead_code)]
     pub fn get_all_moves(&self, board: &Board) -> Vec<(Move, u16)> {
         self.book.get_all_moves(board)
@@ -105,7 +92,6 @@ impl OptimizedPolyglotBook {
             .collect()
     }
 
-    /// Get the best move with its weight and position hash.
     #[allow(dead_code)]
     pub fn get_best_move_with_info(&self, board: &Board) -> Option<(Move, u16, u64)> {
         self.book.get_best_move(board)
@@ -116,19 +102,16 @@ impl OptimizedPolyglotBook {
             ))
     }
 
-    /// Check if a position exists in the book.
     #[allow(dead_code)]
     pub fn has_position(&self, board: &Board) -> bool {
         self.book.has_position(board)
     }
 
-    /// Get the number of entries in the book.
     #[allow(dead_code)]
     pub fn entry_count(&self) -> usize {
         self.book.entry_count()
     }
 
-    /// Get debug info about the book.
     pub fn debug_info(&self) -> (usize, Option<u64>, Option<u64>) {
         (
             self.book.entry_count(),
@@ -146,26 +129,22 @@ mod tests {
     fn test_board_position_implementation() {
         let board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         
-        // Test piece_at
-        assert_eq!(board.piece_at(0), PolyglotPiece::WRook);   // a1
-        assert_eq!(board.piece_at(4), PolyglotPiece::WKing);   // e1
-        assert_eq!(board.piece_at(60), PolyglotPiece::BKing);  // e8
-        assert_eq!(board.piece_at(63), PolyglotPiece::BRook);  // h8
+        assert_eq!(board.piece_at(0), PolyglotPiece::WRook);
+        assert_eq!(board.piece_at(4), PolyglotPiece::WKing);
+        assert_eq!(board.piece_at(60), PolyglotPiece::BKing);
+        assert_eq!(board.piece_at(63), PolyglotPiece::BRook);
         
-        // Test other methods
         assert!(board.is_white_to_move());
-        assert_eq!(board.castling_rights(), 15); // All castling rights
+        assert_eq!(board.castling_rights(), 15);
         assert_eq!(board.en_passant_file(), None);
     }
 
     #[test]
     fn test_piece_conversion() {
-        // Test board piece to polyglot piece conversion
         assert_eq!(convert_board_piece_to_polyglot(BoardPiece::WPawn), PolyglotPiece::WPawn);
         assert_eq!(convert_board_piece_to_polyglot(BoardPiece::BQueen), PolyglotPiece::BQueen);
         assert_eq!(convert_board_piece_to_polyglot(BoardPiece::Empty), PolyglotPiece::Empty);
         
-        // Test polyglot piece to board piece conversion
         assert_eq!(convert_polyglot_piece_to_board(PolyglotPiece::WKnight), BoardPiece::WKnight);
         assert_eq!(convert_polyglot_piece_to_board(PolyglotPiece::BRook), BoardPiece::BRook);
         assert_eq!(convert_polyglot_piece_to_board(PolyglotPiece::Empty), BoardPiece::Empty);
@@ -183,11 +162,9 @@ mod tests {
 
     #[test]
     fn test_hash_consistency() {
-        // Test that our BoardPosition implementation produces the correct hash
         let board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         let hash = polyglot_book_rs::hash::polyglot_hash(&board);
         
-        // This should match the known correct starting position hash
         assert_eq!(hash, 0x463B96181691FC9C);
     }
 }
