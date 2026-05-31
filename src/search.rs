@@ -5,6 +5,7 @@ use crate::board::{Board, Piece};
 use crate::eval::evaluate_with_nnue;
 use crate::movegen::{apply_move, is_in_check, legal_captures, legal_moves, Move};
 use crate::nnue::NnueEvaluator;
+use nnue_rs::Accumulator;
 
 const MATE_SCORE: i32 = 1_000_000;
 const NEG_INF: i32 = -MATE_SCORE;
@@ -12,6 +13,7 @@ const POS_INF: i32 = MATE_SCORE;
 
 const MAX_PLY: usize = 128;
 const MAX_KILLERS: usize = 2;
+const ACC_MAX_PLY: usize = 160;
 
 const FUTILITY_MARGIN: i32 = 100;
 const REVERSE_FUTILITY_MARGIN: i32 = 80;
@@ -174,18 +176,81 @@ fn decode_entry(data: u64) -> TTEntry {
 }
 
 #[derive(Clone)]
+struct AccStack {
+    stack: Vec<Accumulator>,
+    enabled: bool,
+}
+
+impl AccStack {
+    fn new(nnue: &Option<NnueEvaluator>) -> Self {
+        if let Some(ev) = nnue {
+            if let Some(a0) = ev.new_accumulator() {
+                return Self {
+                    stack: vec![a0; ACC_MAX_PLY],
+                    enabled: true,
+                };
+            }
+        }
+        Self {
+            stack: Vec::new(),
+            enabled: false,
+        }
+    }
+
+    fn root(&mut self, nnue: &Option<NnueEvaluator>, board: &Board) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(ev) = nnue {
+            ev.refresh(board, &mut self.stack[0]);
+        }
+    }
+
+    fn descend(&mut self, nnue: &Option<NnueEvaluator>, ply: usize, parent: &Board, child: &Board) {
+        if !self.enabled || ply + 1 >= self.stack.len() {
+            return;
+        }
+        let (lo, hi) = self.stack.split_at_mut(ply + 1);
+        if let Some(ev) = nnue {
+            ev.update(parent, child, &lo[ply], &mut hi[0]);
+        }
+    }
+
+    fn carry_null(&mut self, ply: usize) {
+        if !self.enabled || ply + 1 >= self.stack.len() {
+            return;
+        }
+        let (lo, hi) = self.stack.split_at_mut(ply + 1);
+        hi[0].clone_from(&lo[ply]);
+    }
+
+    fn eval(&self, nnue: &Option<NnueEvaluator>, ply: usize, board: &Board) -> Option<i32> {
+        if !self.enabled || ply >= self.stack.len() {
+            return None;
+        }
+        let white_relative = nnue.as_ref().and_then(|ev| ev.eval_acc(&self.stack[ply], board))?;
+        Some(if board.is_white_to_move() {
+            white_relative
+        } else {
+            -white_relative
+        })
+    }
+}
+
 struct SearchTables {
     killer_moves: [[Option<Move>; MAX_KILLERS]; MAX_PLY],
     history: [[i32; 64]; 64],
     counter_moves: [[Option<Move>; 64]; 64],
+    acc_stack: AccStack,
 }
 
 impl SearchTables {
-    fn new() -> Self {
+    fn new(nnue: &Option<NnueEvaluator>) -> Self {
         Self {
             killer_moves: [[None; MAX_KILLERS]; MAX_PLY],
             history: [[0; 64]; 64],
             counter_moves: [[None; 64]; 64],
+            acc_stack: AccStack::new(nnue),
         }
     }
 
@@ -312,7 +377,7 @@ fn search_single_thread(
     on_progress: &mut impl FnMut(SearchEvent),
 ) {
     let mut prev_scores = vec![0; multi_pv];
-    let mut tables = SearchTables::new();
+    let mut tables = SearchTables::new(nnue);
 
     for current_depth in 1..=depth {
         if current_depth > 1 && cancel_flag.load(Ordering::Relaxed) {
@@ -446,7 +511,7 @@ fn main_thread_search(
     on_progress: &mut impl FnMut(SearchEvent),
 ) {
     let mut prev_scores = vec![0; multi_pv];
-    let mut tables = SearchTables::new();
+    let mut tables = SearchTables::new(nnue);
 
     for current_depth in 1..=depth {
         if current_depth > 1 && cancel_flag.load(Ordering::Relaxed) {
@@ -526,7 +591,7 @@ fn helper_thread_search(
     best_result: &Arc<Mutex<(Option<Move>, i32, [Option<Move>; 32])>>,
 ) {
     let mut prev_scores = vec![0; multi_pv];
-    let mut tables = SearchTables::new();
+    let mut tables = SearchTables::new(nnue);
 
     let depth_offset = (thread_id % 3) as i32 - 1;
 
@@ -666,6 +731,8 @@ fn search_root(
     let tt_move = probe_tt(tt, hash).and_then(|e| e.best_move);
     order_moves(board, &mut moves, tt_move, None, 0, tables);
 
+    tables.acc_stack.root(nnue, board);
+
     let mut best_move = None;
     let mut best_score = NEG_INF;
     let mut best_pv = [None; 32];
@@ -708,6 +775,7 @@ fn search_root(
         let child_depth = depth - 1 + extension;
 
         position_history.push(next_hash);
+        tables.acc_stack.descend(nnue, 0, board, &next);
 
         let score = if i == 0 {
             -pvs(&next, child_depth, -beta, -alpha, nodes, 1, tt, cancel_flag, nnue, &mut pv_line, position_history, tables, None)
@@ -788,20 +856,23 @@ fn pvs(
     }
 
     if depth == 0 {
-        return quiescence(board, alpha, beta, nodes, ply, cancel_flag, nnue, position_history);
+        return quiescence(board, alpha, beta, nodes, ply, cancel_flag, nnue, position_history, tables);
     }
 
     let in_check = is_in_check(board, board.is_white_to_move());
     let static_eval = if in_check {
         NEG_INF
     } else {
-        static_eval_with_nnue(board, nnue)
+        tables
+            .acc_stack
+            .eval(nnue, ply as usize, board)
+            .unwrap_or_else(|| static_eval_with_nnue(board, nnue))
     };
 
     if !is_pv && !in_check && depth <= 3 {
         let razor_margin = RAZORING_MARGIN * depth as i32;
         if static_eval + razor_margin < alpha {
-            let q_score = quiescence(board, alpha - razor_margin, alpha - razor_margin + 1, nodes, ply, cancel_flag, nnue, position_history);
+            let q_score = quiescence(board, alpha - razor_margin, alpha - razor_margin + 1, nodes, ply, cancel_flag, nnue, position_history, tables);
             if q_score + razor_margin <= alpha {
                 return q_score;
             }
@@ -820,6 +891,7 @@ fn pvs(
         null_board.white_to_move = !null_board.white_to_move;
         let r = if depth >= 6 { 3 } else { 2 };
         let null_depth = depth.saturating_sub(1 + r);
+        tables.acc_stack.carry_null(ply as usize);
         let null_score = -pvs(&null_board, null_depth, -beta, -beta + 1, nodes, ply + 1, tt, cancel_flag, nnue, &mut [None; 32], position_history, tables, None);
         if null_score >= beta {
             if depth >= 12 {
@@ -908,6 +980,8 @@ fn pvs(
             reduction = reduction.min(child_depth.saturating_sub(1));
         }
 
+        tables.acc_stack.descend(nnue, ply as usize, board, &next);
+
         let score = if i == 0 {
             -pvs(&next, child_depth, -beta, -alpha, nodes, ply + 1, tt, cancel_flag, nnue, &mut child_pv, position_history, tables, Some(mv))
         } else {
@@ -979,6 +1053,7 @@ fn quiescence(
     cancel_flag: &Arc<AtomicBool>,
     nnue: &Option<NnueEvaluator>,
     position_history: &mut PositionHistory,
+    tables: &mut SearchTables,
 ) -> i32 {
     if cancel_flag.load(Ordering::Relaxed) {
         return 0;
@@ -995,7 +1070,10 @@ fn quiescence(
     let stand_pat = if in_check {
         NEG_INF
     } else {
-        static_eval_with_nnue(board, nnue)
+        tables
+            .acc_stack
+            .eval(nnue, ply as usize, board)
+            .unwrap_or_else(|| static_eval_with_nnue(board, nnue))
     };
 
     if !in_check && stand_pat >= beta {
@@ -1048,8 +1126,9 @@ fn quiescence(
         apply_move(&mut next, mv);
 
         position_history.push(next.position_hash());
+        tables.acc_stack.descend(nnue, ply as usize, board, &next);
 
-        let score = -quiescence(&next, -beta, -alpha, nodes, ply + 1, cancel_flag, nnue, position_history);
+        let score = -quiescence(&next, -beta, -alpha, nodes, ply + 1, cancel_flag, nnue, position_history, tables);
 
         position_history.pop();
 
