@@ -1,7 +1,8 @@
 /target
 Cargo.lock
 uci.sh
-.cargo/
+.cargo/*
+!.cargo/config.toml
 src_old
 komodo.bin
 nn-37f18f62d772.nnue
