@@ -142,7 +142,7 @@ impl UciEngine {
 
         match parts[0] {
             "uci" => {
-                uci_println!("id name z-slon 0.6.0");
+                uci_println!("id name z-slon 0.7.0");
                 uci_println!("id author hedgegod");
                 uci_println!("option name Hash type spin default 16 min 1 max 33554432");
                 uci_println!("option name Threads type spin default 1 min 1 max 512");

@@ -105,7 +105,14 @@ impl NnueEvaluator {
         self.network.as_ref().map(|n| n.new_accumulator())
     }
 
+    fn kings_present(board: &Board) -> bool {
+        board.king_sq(true) < 64 && board.king_sq(false) < 64
+    }
+
     pub fn refresh(&self, board: &Board, acc: &mut Accumulator) {
+        if !Self::kings_present(board) {
+            return;
+        }
         if let Some(n) = &self.network {
             n.refresh(board, acc);
         }
@@ -122,6 +129,9 @@ impl NnueEvaluator {
             Some(n) => n,
             None => return,
         };
+        if !Self::kings_present(child_board) {
+            return;
+        }
         let white_king_moved = parent_board.pieces[5] != child_board.pieces[5];
         let black_king_moved = parent_board.pieces[11] != child_board.pieces[11];
         let mut removed = [(0u8, 0usize); 4];

@@ -23,3 +23,7 @@ secrets/
 z-slon-nnue
 z-slon-nnue-dbg
 z-slon-timecat
+sprt_simd*.log
+z-slon-simd
+z-slon-presimd
+sprt_*.log

@@ -732,6 +732,93 @@ mod perft_tests {
         assert_eq!(got, expected, "perft({}) fen={} got {} expected {}", depth, fen, got, expected);
     }
 
+    fn legality_dfs(board: &Board, depth: u32) {
+        if depth == 0 {
+            return;
+        }
+        let mover = board.is_white_to_move();
+        for mv in legal_moves(board) {
+            let mut b = board.clone();
+            apply_move(&mut b, mv);
+            assert!(
+                b.king_sq(mover) < 64,
+                "legal move {:?} left mover kingless: fen={}",
+                mv,
+                board.to_fen()
+            );
+            assert!(
+                !is_in_check(&b, mover),
+                "ILLEGAL move {} from {} -> mover king attacked after move",
+                format_move(mv),
+                board.to_fen()
+            );
+            legality_dfs(&b, depth - 1);
+        }
+    }
+
+    fn format_move(m: Move) -> String {
+        let f = |s: u8| format!("{}{}", (b'a' + s % 8) as char, (b'1' + s / 8) as char);
+        format!("{}{}", f(m.from), f(m.to))
+    }
+
+    #[test]
+    fn legality_random_playouts() {
+        let mut state = 0xDEADBEEFCAFEu64;
+        let mut rng = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..3000 {
+            let mut board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+            let mut line: Vec<String> = Vec::new();
+            for _ in 0..120 {
+                let mover = board.is_white_to_move();
+                let moves = legal_moves(&board);
+                if moves.is_empty() {
+                    break;
+                }
+                let mv = moves[(rng() as usize) % moves.len()];
+                let prev = board.to_fen();
+                apply_move(&mut board, mv);
+                line.push(format_move(mv));
+                assert!(
+                    board.king_sq(mover) < 64 && !is_in_check(&board, mover),
+                    "ILLEGAL {} from fen={} | line={:?}",
+                    format_move(mv),
+                    prev,
+                    line
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn legality_startpos() {
+        legality_dfs(&Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"), 4);
+    }
+
+    #[test]
+    fn legality_kiwipete() {
+        legality_dfs(&Board::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"), 4);
+    }
+
+    #[test]
+    fn legality_pos3() {
+        legality_dfs(&Board::from_fen("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1"), 5);
+    }
+
+    #[test]
+    fn legality_pos4() {
+        legality_dfs(&Board::from_fen("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1"), 4);
+    }
+
+    #[test]
+    fn legality_pos5() {
+        legality_dfs(&Board::from_fen("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8"), 4);
+    }
+
     #[test]
     fn perft_startpos() {
         check("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 5, 4865609);
