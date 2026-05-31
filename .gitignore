@@ -19,3 +19,6 @@ sprt_*.pgn
 ponder_test.pgn
 .lichess_token
 secrets/
+z-slon-nnue
+z-slon-nnue-dbg
+z-slon-timecat

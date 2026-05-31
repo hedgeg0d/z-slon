@@ -18,6 +18,6 @@ panic = "abort"
 tokio = { version = "1", features = ["full"] }
 rustyline = "14"
 clap = { version = "4", features = ["derive"] }
-timecat = { version = "1.49", features = ["inbuilt_nnue"] }
+nnue-rs = { path = "../nnue-rs" }
 polyglot-book-rs = "0.1.0"
 lazy_static = "1.5"

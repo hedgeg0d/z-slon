@@ -46,26 +46,26 @@ pub fn generate_moves(board: &Board) -> Vec<Move> {
 pub fn filter_legal_moves(board: &Board, moves: Vec<Move>) -> Vec<Move> {
     let mut legal = Vec::new();
     let white = board.is_white_to_move();
-    let old_ep = board.en_passant;
     for m in moves {
         let mut temp = board.clone();
-        let captured_sq = if temp.en_passant.is_some()
-            && temp.square(m.to) == Piece::Empty
-            && (temp.square(m.from) == Piece::WPawn || temp.square(m.from) == Piece::BPawn)
-            && (m.from as i8 - m.to as i8).abs() != 16
-        {
-            let dir = if white { -8 } else { 8 };
-            (m.to as i8 + dir) as u8
-        } else {
-            m.to
-        };
-        let captured = temp.square(captured_sq);
+        let moving = temp.square(m.from);
+        let is_ep = temp.square(m.to) == Piece::Empty
+            && matches!(moving, Piece::WPawn | Piece::BPawn)
+            && {
+                let d = (m.from as i8 - m.to as i8).abs();
+                d == 7 || d == 9
+            };
         make_move(&mut temp, m);
-        let new_king_sq = temp.king_sq(white);
-        if !is_square_attacked(&temp, new_king_sq, !white) {
+        if is_ep {
+            let dir = if white { -8 } else { 8 };
+            let cap_sq = (m.to as i8 + dir) as u8;
+            let cap_idx = if white { 6 } else { 0 };
+            temp.pieces[cap_idx] &= !(1u64 << cap_sq);
+        }
+        let king_sq = temp.king_sq(white);
+        if !is_square_attacked(&temp, king_sq, !white) {
             legal.push(m);
         }
-        unmake_move(&mut temp, m, captured, old_ep);
     }
     legal
 }
@@ -701,82 +701,53 @@ fn make_move(board: &mut Board, m: Move) {
     board.white_to_move = !board.white_to_move;
 }
 
-fn unmake_move(board: &mut Board, m: Move, captured: Piece, old_ep: Option<u8>) {
-    board.white_to_move = !board.white_to_move;
-    let orig_piece = if m.promotion.is_some() {
-        if board.white_to_move {
-            Piece::WPawn
-        } else {
-            Piece::BPawn
+
+#[cfg(test)]
+mod perft_tests {
+    use super::*;
+    use crate::board::Board;
+
+    fn perft(board: &Board, depth: u32) -> u64 {
+        if depth == 0 {
+            return 1;
         }
-    } else {
-        board.square(m.to)
-    };
-    let to_mask = !(1u64 << m.to);
-    if let Some(promo) = m.promotion {
-        let promo_idx = match promo {
-            Piece::WQueen => 4,
-            Piece::WRook => 3,
-            Piece::WBishop => 2,
-            Piece::WKnight => 1,
-            Piece::BQueen => 10,
-            Piece::BRook => 9,
-            Piece::BBishop => 8,
-            Piece::BKnight => 7,
-            _ => return,
-        };
-        board.pieces[promo_idx] &= to_mask;
-    } else {
-        let idx = match orig_piece {
-            Piece::WPawn => 0,
-            Piece::WKnight => 1,
-            Piece::WBishop => 2,
-            Piece::WRook => 3,
-            Piece::WQueen => 4,
-            Piece::WKing => 5,
-            Piece::BPawn => 6,
-            Piece::BKnight => 7,
-            Piece::BBishop => 8,
-            Piece::BRook => 9,
-            Piece::BQueen => 10,
-            Piece::BKing => 11,
-            _ => return,
-        };
-        board.pieces[idx] &= to_mask;
+        let moves = legal_moves(board);
+        if depth == 1 {
+            return moves.len() as u64;
+        }
+        let mut nodes = 0;
+        for mv in moves {
+            let mut b = board.clone();
+            apply_move(&mut b, mv);
+            nodes += perft(&b, depth - 1);
+        }
+        nodes
     }
-    let orig_idx = match orig_piece {
-        Piece::WPawn => 0,
-        Piece::WKnight => 1,
-        Piece::WBishop => 2,
-        Piece::WRook => 3,
-        Piece::WQueen => 4,
-        Piece::WKing => 5,
-        Piece::BPawn => 6,
-        Piece::BKnight => 7,
-        Piece::BBishop => 8,
-        Piece::BRook => 9,
-        Piece::BQueen => 10,
-        Piece::BKing => 11,
-        _ => return,
-    };
-    board.pieces[orig_idx] |= 1u64 << m.from;
-    if captured != Piece::Empty {
-        let cap_idx = match captured {
-            Piece::WPawn => 0,
-            Piece::WKnight => 1,
-            Piece::WBishop => 2,
-            Piece::WRook => 3,
-            Piece::WQueen => 4,
-            Piece::WKing => 5,
-            Piece::BPawn => 6,
-            Piece::BKnight => 7,
-            Piece::BBishop => 8,
-            Piece::BRook => 9,
-            Piece::BQueen => 10,
-            Piece::BKing => 11,
-            _ => return,
-        };
-        board.pieces[cap_idx] |= 1u64 << m.to;
+
+    fn check(fen: &str, depth: u32, expected: u64) {
+        let board = Board::from_fen(fen);
+        let got = perft(&board, depth);
+        assert_eq!(got, expected, "perft({}) fen={} got {} expected {}", depth, fen, got, expected);
     }
-    board.en_passant = old_ep;
+
+    #[test]
+    fn perft_startpos() {
+        check("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 5, 4865609);
+    }
+    #[test]
+    fn perft_kiwipete() {
+        check("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 3, 97862);
+    }
+    #[test]
+    fn perft_pos3() {
+        check("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 6, 11030083);
+    }
+    #[test]
+    fn perft_pos4() {
+        check("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1", 3, 9467);
+    }
+    #[test]
+    fn perft_pos5() {
+        check("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 3, 62379);
+    }
 }

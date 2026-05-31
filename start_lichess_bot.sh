@@ -172,6 +172,7 @@ fi
 
 load_token
 generate_config
+python3 "$SCRIPT_DIR/lichess_concurrency_patch.py" "$BOT_DIR" || echo "WARNING: concurrency patch not applied"
 summary
 
 cd "$BOT_DIR"

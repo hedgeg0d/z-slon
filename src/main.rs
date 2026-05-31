@@ -88,7 +88,7 @@ impl EngineState {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    
+
     set_debug_mode(args.debug);
     
     let nnue_evaluator = NnueEvaluator::new();
