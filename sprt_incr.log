@@ -1,0 +1,492 @@
+Indexing opening suite...
+Started game 3 of 2000 (incr vs old)
+Started game 2 of 2000 (old vs incr)
+Started game 1 of 2000 (incr vs old)
+Started game 8 of 2000 (old vs incr)
+Started game 4 of 2000 (old vs incr)
+Started game 5 of 2000 (incr vs old)
+Started game 7 of 2000 (incr vs old)
+Started game 6 of 2000 (old vs incr)
+Finished game 6 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 1 - 0 - 0  [1.000] 1
+Started game 9 of 2000 (incr vs old)
+Finished game 3 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 2 - 0 - 0  [1.000] 2
+Started game 10 of 2000 (old vs incr)
+Finished game 2 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 3 - 0 - 0  [1.000] 3
+Started game 11 of 2000 (incr vs old)
+Finished game 1 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 4 - 0 - 0  [1.000] 4
+Started game 12 of 2000 (old vs incr)
+Finished game 5 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 5 - 0 - 0  [1.000] 5
+Started game 13 of 2000 (incr vs old)
+Finished game 8 (old vs incr): 1-0 {White mates}
+Score of incr vs old: 5 - 1 - 0  [0.833] 6
+Started game 14 of 2000 (old vs incr)
+Finished game 7 (incr vs old): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 5 - 1 - 1  [0.786] 7
+Started game 15 of 2000 (incr vs old)
+Finished game 9 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 6 - 1 - 1  [0.813] 8
+Started game 16 of 2000 (old vs incr)
+Finished game 4 (old vs incr): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 6 - 1 - 2  [0.778] 9
+Started game 17 of 2000 (incr vs old)
+Finished game 14 (old vs incr): 1-0 {White mates}
+Score of incr vs old: 6 - 2 - 2  [0.700] 10
+...      incr playing White: 4 - 0 - 1  [0.900] 5
+...      incr playing Black: 2 - 2 - 1  [0.500] 5
+...      White vs Black: 6 - 2 - 2  [0.700] 10
+Elo difference: 147.2 +/- 268.0, LOS: 92.1 %, DrawRatio: 20.0 %
+SPRT: llr 0.147 (5.0%), lbound -2.94, ubound 2.94
+Started game 18 of 2000 (old vs incr)
+Finished game 12 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 7 - 2 - 2  [0.727] 11
+Started game 19 of 2000 (incr vs old)
+Finished game 11 (incr vs old): 0-1 {Black mates}
+Score of incr vs old: 7 - 3 - 2  [0.667] 12
+Started game 20 of 2000 (old vs incr)
+Finished game 10 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 8 - 3 - 2  [0.692] 13
+Started game 21 of 2000 (incr vs old)
+Finished game 16 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 9 - 3 - 2  [0.714] 14
+Started game 22 of 2000 (old vs incr)
+Finished game 13 (incr vs old): 0-1 {Black mates}
+Score of incr vs old: 9 - 4 - 2  [0.667] 15
+Started game 23 of 2000 (incr vs old)
+Finished game 21 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 10 - 4 - 2  [0.688] 16
+Started game 24 of 2000 (old vs incr)
+Finished game 20 (old vs incr): 1/2-1/2 {Draw by insufficient mating material}
+Score of incr vs old: 10 - 4 - 3  [0.676] 17
+Started game 25 of 2000 (incr vs old)
+Finished game 19 (incr vs old): 1/2-1/2 {Draw by insufficient mating material}
+Score of incr vs old: 10 - 4 - 4  [0.667] 18
+Started game 26 of 2000 (old vs incr)
+Warning: Illegal PV move f4g4 from old (9)
+Warning: PV:  f4g4
+Warning: Illegal PV move d5g5 from old (9)
+Warning: PV:  d5g5
+Warning: Illegal PV move d5g5 from old (9)
+Warning: PV:  d5g5
+Warning: Illegal PV move d5g5 from old (9)
+Warning: PV:  d5g5
+Warning: Illegal PV move d5g5 from old (9)
+Warning: PV:  d5g5
+Warning: Illegal PV move d5g5 from old (9)
+Warning: PV:  d5g5
+Warning: Illegal PV move d5g5 from old (9)
+Warning: PV:  d5g5
+Warning: Illegal PV move d5g5 from old (9)
+Warning: PV:  d5g5
+Finished game 23 (incr vs old): 1-0 {Black makes an illegal move: d5g5}
+Score of incr vs old: 11 - 4 - 4  [0.684] 19
+Started game 27 of 2000 (incr vs old)
+Finished game 17 (incr vs old): 1/2-1/2 {Draw by stalemate}
+Score of incr vs old: 11 - 4 - 5  [0.675] 20
+...      incr playing White: 6 - 2 - 3  [0.682] 11
+...      incr playing Black: 5 - 2 - 2  [0.667] 9
+...      White vs Black: 8 - 7 - 5  [0.525] 20
+Elo difference: 127.0 +/- 149.0, LOS: 96.5 %, DrawRatio: 25.0 %
+SPRT: llr 0.271 (9.2%), lbound -2.94, ubound 2.94
+Started game 28 of 2000 (old vs incr)
+Finished game 15 (incr vs old): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 11 - 4 - 6  [0.667] 21
+Started game 29 of 2000 (incr vs old)
+Finished game 22 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 12 - 4 - 6  [0.682] 22
+Started game 30 of 2000 (old vs incr)
+Finished game 24 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 13 - 4 - 6  [0.696] 23
+Started game 31 of 2000 (incr vs old)
+Finished game 18 (old vs incr): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 13 - 4 - 7  [0.688] 24
+Started game 32 of 2000 (old vs incr)
+Finished game 25 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 14 - 4 - 7  [0.700] 25
+Started game 33 of 2000 (incr vs old)
+Finished game 27 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 15 - 4 - 7  [0.712] 26
+Started game 34 of 2000 (old vs incr)
+Finished game 28 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 16 - 4 - 7  [0.722] 27
+Started game 35 of 2000 (incr vs old)
+Finished game 29 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 17 - 4 - 7  [0.732] 28
+Started game 36 of 2000 (old vs incr)
+Finished game 26 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 18 - 4 - 7  [0.741] 29
+Started game 37 of 2000 (incr vs old)
+Finished game 31 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 19 - 4 - 7  [0.750] 30
+...      incr playing White: 10 - 2 - 4  [0.750] 16
+...      incr playing Black: 9 - 2 - 3  [0.750] 14
+...      White vs Black: 12 - 11 - 7  [0.517] 30
+Elo difference: 190.8 +/- 128.7, LOS: 99.9 %, DrawRatio: 23.3 %
+SPRT: llr 0.613 (20.8%), lbound -2.94, ubound 2.94
+Started game 38 of 2000 (old vs incr)
+Finished game 30 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 20 - 4 - 7  [0.758] 31
+Started game 39 of 2000 (incr vs old)
+Finished game 33 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 21 - 4 - 7  [0.766] 32
+Started game 40 of 2000 (old vs incr)
+Finished game 32 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 22 - 4 - 7  [0.773] 33
+Started game 41 of 2000 (incr vs old)
+Finished game 35 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 23 - 4 - 7  [0.779] 34
+Started game 42 of 2000 (old vs incr)
+Finished game 34 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 24 - 4 - 7  [0.786] 35
+Started game 43 of 2000 (incr vs old)
+Finished game 36 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 25 - 4 - 7  [0.792] 36
+Started game 44 of 2000 (old vs incr)
+Finished game 39 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 26 - 4 - 7  [0.797] 37
+Started game 45 of 2000 (incr vs old)
+Finished game 41 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 27 - 4 - 7  [0.803] 38
+Started game 46 of 2000 (old vs incr)
+Finished game 37 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 28 - 4 - 7  [0.808] 39
+Started game 47 of 2000 (incr vs old)
+Finished game 42 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 29 - 4 - 7  [0.813] 40
+...      incr playing White: 15 - 2 - 4  [0.810] 21
+...      incr playing Black: 14 - 2 - 3  [0.816] 19
+...      White vs Black: 17 - 16 - 7  [0.512] 40
+Elo difference: 254.7 +/- 127.8, LOS: 100.0 %, DrawRatio: 17.5 %
+SPRT: llr 0.995 (33.8%), lbound -2.94, ubound 2.94
+Started game 48 of 2000 (old vs incr)
+Finished game 45 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 30 - 4 - 7  [0.817] 41
+Started game 49 of 2000 (incr vs old)
+Finished game 40 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 31 - 4 - 7  [0.821] 42
+Started game 50 of 2000 (old vs incr)
+Finished game 38 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 32 - 4 - 7  [0.826] 43
+Started game 51 of 2000 (incr vs old)
+Finished game 43 (incr vs old): 1/2-1/2 {Draw by insufficient mating material}
+Score of incr vs old: 32 - 4 - 8  [0.818] 44
+Started game 52 of 2000 (old vs incr)
+Finished game 46 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 33 - 4 - 8  [0.822] 45
+Started game 53 of 2000 (incr vs old)
+Finished game 48 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 34 - 4 - 8  [0.826] 46
+Started game 54 of 2000 (old vs incr)
+Finished game 51 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 35 - 4 - 8  [0.830] 47
+Started game 55 of 2000 (incr vs old)
+Finished game 44 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 36 - 4 - 8  [0.833] 48
+Started game 56 of 2000 (old vs incr)
+Finished game 47 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 37 - 4 - 8  [0.837] 49
+Started game 57 of 2000 (incr vs old)
+Finished game 52 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 38 - 4 - 8  [0.840] 50
+...      incr playing White: 18 - 2 - 5  [0.820] 25
+...      incr playing Black: 20 - 2 - 3  [0.860] 25
+...      White vs Black: 20 - 22 - 8  [0.480] 50
+Elo difference: 288.1 +/- 120.5, LOS: 100.0 %, DrawRatio: 16.0 %
+SPRT: llr 1.38 (46.9%), lbound -2.94, ubound 2.94
+Started game 58 of 2000 (old vs incr)
+Finished game 49 (incr vs old): 1/2-1/2 {Draw by insufficient mating material}
+Score of incr vs old: 38 - 4 - 9  [0.833] 51
+Started game 59 of 2000 (incr vs old)
+Finished game 50 (old vs incr): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 38 - 4 - 10  [0.827] 52
+Started game 60 of 2000 (old vs incr)
+Finished game 53 (incr vs old): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 38 - 4 - 11  [0.821] 53
+Started game 61 of 2000 (incr vs old)
+Finished game 59 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 39 - 4 - 11  [0.824] 54
+Started game 62 of 2000 (old vs incr)
+Finished game 56 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 40 - 4 - 11  [0.827] 55
+Started game 63 of 2000 (incr vs old)
+Finished game 57 (incr vs old): 0-1 {Black mates}
+Score of incr vs old: 40 - 5 - 11  [0.813] 56
+Started game 64 of 2000 (old vs incr)
+Finished game 54 (old vs incr): 1-0 {White mates}
+Score of incr vs old: 40 - 6 - 11  [0.798] 57
+Started game 65 of 2000 (incr vs old)
+Finished game 58 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 41 - 6 - 11  [0.802] 58
+Started game 66 of 2000 (old vs incr)
+Finished game 55 (incr vs old): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 41 - 6 - 12  [0.797] 59
+Started game 67 of 2000 (incr vs old)
+Finished game 62 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 42 - 6 - 12  [0.800] 60
+...      incr playing White: 19 - 3 - 8  [0.767] 30
+...      incr playing Black: 23 - 3 - 4  [0.833] 30
+...      White vs Black: 22 - 26 - 12  [0.467] 60
+Elo difference: 240.8 +/- 95.8, LOS: 100.0 %, DrawRatio: 20.0 %
+SPRT: llr 1.49 (50.7%), lbound -2.94, ubound 2.94
+Started game 68 of 2000 (old vs incr)
+Finished game 65 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 43 - 6 - 12  [0.803] 61
+Started game 69 of 2000 (incr vs old)
+Finished game 63 (incr vs old): 0-1 {Black mates}
+Score of incr vs old: 43 - 7 - 12  [0.790] 62
+Started game 70 of 2000 (old vs incr)
+Finished game 64 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 44 - 7 - 12  [0.794] 63
+Started game 71 of 2000 (incr vs old)
+Finished game 61 (incr vs old): 1/2-1/2 {Draw by insufficient mating material}
+Score of incr vs old: 44 - 7 - 13  [0.789] 64
+Started game 72 of 2000 (old vs incr)
+Finished game 60 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 45 - 7 - 13  [0.792] 65
+Started game 73 of 2000 (incr vs old)
+Finished game 66 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 46 - 7 - 13  [0.795] 66
+Started game 74 of 2000 (old vs incr)
+Finished game 67 (incr vs old): 0-1 {Black mates}
+Score of incr vs old: 46 - 8 - 13  [0.784] 67
+Started game 75 of 2000 (incr vs old)
+Finished game 68 (old vs incr): 1-0 {White mates}
+Score of incr vs old: 46 - 9 - 13  [0.772] 68
+Started game 76 of 2000 (old vs incr)
+Finished game 71 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 47 - 9 - 13  [0.775] 69
+Started game 77 of 2000 (incr vs old)
+Finished game 70 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 48 - 9 - 13  [0.779] 70
+...      incr playing White: 21 - 5 - 9  [0.729] 35
+...      incr playing Black: 27 - 4 - 4  [0.829] 35
+...      White vs Black: 25 - 32 - 13  [0.450] 70
+Elo difference: 218.4 +/- 87.1, LOS: 100.0 %, DrawRatio: 18.6 %
+SPRT: llr 1.51 (51.3%), lbound -2.94, ubound 2.94
+Started game 78 of 2000 (old vs incr)
+Finished game 72 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 49 - 9 - 13  [0.782] 71
+Started game 79 of 2000 (incr vs old)
+Finished game 74 (old vs incr): 1/2-1/2 {Draw by 3-fold repetition}
+Score of incr vs old: 49 - 9 - 14  [0.778] 72
+Started game 80 of 2000 (old vs incr)
+Finished game 69 (incr vs old): 0-1 {Black mates}
+Score of incr vs old: 49 - 10 - 14  [0.767] 73
+Started game 81 of 2000 (incr vs old)
+Finished game 76 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 50 - 10 - 14  [0.770] 74
+Started game 82 of 2000 (old vs incr)
+Finished game 77 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 51 - 10 - 14  [0.773] 75
+Started game 83 of 2000 (incr vs old)
+Finished game 73 (incr vs old): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 51 - 10 - 15  [0.770] 76
+Started game 84 of 2000 (old vs incr)
+Finished game 79 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 52 - 10 - 15  [0.773] 77
+Started game 85 of 2000 (incr vs old)
+Finished game 84 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 53 - 10 - 15  [0.776] 78
+Started game 86 of 2000 (old vs incr)
+Finished game 80 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 54 - 10 - 15  [0.778] 79
+Started game 87 of 2000 (incr vs old)
+Finished game 75 (incr vs old): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 54 - 10 - 16  [0.775] 80
+...      incr playing White: 23 - 6 - 11  [0.713] 40
+...      incr playing Black: 31 - 4 - 5  [0.838] 40
+...      White vs Black: 27 - 37 - 16  [0.438] 80
+Elo difference: 214.8 +/- 79.5, LOS: 100.0 %, DrawRatio: 20.0 %
+SPRT: llr 1.75 (59.4%), lbound -2.94, ubound 2.94
+Started game 88 of 2000 (old vs incr)
+Finished game 86 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 55 - 10 - 16  [0.778] 81
+Started game 89 of 2000 (incr vs old)
+Finished game 83 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 56 - 10 - 16  [0.780] 82
+Started game 90 of 2000 (old vs incr)
+Finished game 81 (incr vs old): 0-1 {Black mates}
+Score of incr vs old: 56 - 11 - 16  [0.771] 83
+Started game 91 of 2000 (incr vs old)
+Finished game 85 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 57 - 11 - 16  [0.774] 84
+Started game 92 of 2000 (old vs incr)
+Finished game 82 (old vs incr): 1-0 {White mates}
+Score of incr vs old: 57 - 12 - 16  [0.765] 85
+Started game 93 of 2000 (incr vs old)
+Finished game 87 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 58 - 12 - 16  [0.767] 86
+Started game 94 of 2000 (old vs incr)
+Finished game 78 (old vs incr): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 58 - 12 - 17  [0.764] 87
+Started game 95 of 2000 (incr vs old)
+Finished game 89 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 59 - 12 - 17  [0.767] 88
+Started game 96 of 2000 (old vs incr)
+Finished game 88 (old vs incr): 1-0 {White mates}
+Score of incr vs old: 59 - 13 - 17  [0.758] 89
+Started game 97 of 2000 (incr vs old)
+Finished game 90 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 60 - 13 - 17  [0.761] 90
+...      incr playing White: 27 - 7 - 11  [0.722] 45
+...      incr playing Black: 33 - 6 - 6  [0.800] 45
+...      White vs Black: 33 - 40 - 17  [0.461] 90
+Elo difference: 201.3 +/- 74.3, LOS: 100.0 %, DrawRatio: 18.9 %
+SPRT: llr 1.79 (60.8%), lbound -2.94, ubound 2.94
+Started game 98 of 2000 (old vs incr)
+Finished game 96 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 61 - 13 - 17  [0.764] 91
+Started game 99 of 2000 (incr vs old)
+Finished game 93 (incr vs old): 0-1 {Black mates}
+Score of incr vs old: 61 - 14 - 17  [0.755] 92
+Started game 100 of 2000 (old vs incr)
+Finished game 91 (incr vs old): 0-1 {Black mates}
+Score of incr vs old: 61 - 15 - 17  [0.747] 93
+Started game 101 of 2000 (incr vs old)
+Finished game 94 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 62 - 15 - 17  [0.750] 94
+Started game 102 of 2000 (old vs incr)
+Finished game 97 (incr vs old): 1/2-1/2 {Draw by insufficient mating material}
+Score of incr vs old: 62 - 15 - 18  [0.747] 95
+Started game 103 of 2000 (incr vs old)
+Finished game 92 (old vs incr): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 62 - 15 - 19  [0.745] 96
+Started game 104 of 2000 (old vs incr)
+Finished game 95 (incr vs old): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 62 - 15 - 20  [0.742] 97
+Started game 105 of 2000 (incr vs old)
+Finished game 104 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 63 - 15 - 20  [0.745] 98
+Started game 106 of 2000 (old vs incr)
+Finished game 98 (old vs incr): 1-0 {White mates}
+Score of incr vs old: 63 - 16 - 20  [0.737] 99
+Started game 107 of 2000 (incr vs old)
+Finished game 99 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 64 - 16 - 20  [0.740] 100
+...      incr playing White: 28 - 9 - 13  [0.690] 50
+...      incr playing Black: 36 - 7 - 7  [0.790] 50
+...      White vs Black: 35 - 45 - 20  [0.450] 100
+Elo difference: 181.7 +/- 68.1, LOS: 100.0 %, DrawRatio: 20.0 %
+SPRT: llr 1.82 (61.9%), lbound -2.94, ubound 2.94
+Started game 108 of 2000 (old vs incr)
+Finished game 100 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 65 - 16 - 20  [0.743] 101
+Started game 109 of 2000 (incr vs old)
+Finished game 106 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 66 - 16 - 20  [0.745] 102
+Started game 110 of 2000 (old vs incr)
+Finished game 110 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 67 - 16 - 20  [0.748] 103
+Started game 111 of 2000 (incr vs old)
+Finished game 102 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 68 - 16 - 20  [0.750] 104
+Started game 112 of 2000 (old vs incr)
+Finished game 101 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 69 - 16 - 20  [0.752] 105
+Started game 113 of 2000 (incr vs old)
+Finished game 103 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 70 - 16 - 20  [0.755] 106
+Started game 114 of 2000 (old vs incr)
+Finished game 108 (old vs incr): 1-0 {White mates}
+Score of incr vs old: 70 - 17 - 20  [0.748] 107
+Started game 115 of 2000 (incr vs old)
+Finished game 107 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 71 - 17 - 20  [0.750] 108
+Started game 116 of 2000 (old vs incr)
+Finished game 105 (incr vs old): 1/2-1/2 {Draw by insufficient mating material}
+Score of incr vs old: 71 - 17 - 21  [0.748] 109
+Started game 117 of 2000 (incr vs old)
+Finished game 109 (incr vs old): 0-1 {Black mates}
+Score of incr vs old: 71 - 18 - 21  [0.741] 110
+...      incr playing White: 31 - 10 - 14  [0.691] 55
+...      incr playing Black: 40 - 8 - 7  [0.791] 55
+...      White vs Black: 39 - 50 - 21  [0.450] 110
+Elo difference: 182.5 +/- 65.4, LOS: 100.0 %, DrawRatio: 19.1 %
+SPRT: llr 1.98 (67.3%), lbound -2.94, ubound 2.94
+Started game 118 of 2000 (old vs incr)
+Finished game 113 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 72 - 18 - 21  [0.743] 111
+Started game 119 of 2000 (incr vs old)
+Finished game 112 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 73 - 18 - 21  [0.746] 112
+Started game 120 of 2000 (old vs incr)
+Finished game 111 (incr vs old): 1/2-1/2 {Draw by stalemate}
+Score of incr vs old: 73 - 18 - 22  [0.743] 113
+Started game 121 of 2000 (incr vs old)
+Finished game 115 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 74 - 18 - 22  [0.746] 114
+Started game 122 of 2000 (old vs incr)
+Finished game 114 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 75 - 18 - 22  [0.748] 115
+Started game 123 of 2000 (incr vs old)
+Finished game 119 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 76 - 18 - 22  [0.750] 116
+Started game 124 of 2000 (old vs incr)
+Finished game 117 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 77 - 18 - 22  [0.752] 117
+Started game 125 of 2000 (incr vs old)
+Finished game 118 (old vs incr): 1-0 {White mates}
+Score of incr vs old: 77 - 19 - 22  [0.746] 118
+Started game 126 of 2000 (old vs incr)
+Finished game 121 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 78 - 19 - 22  [0.748] 119
+Started game 127 of 2000 (incr vs old)
+Finished game 120 (old vs incr): 1-0 {White mates}
+Score of incr vs old: 78 - 20 - 22  [0.742] 120
+...      incr playing White: 36 - 10 - 15  [0.713] 61
+...      incr playing Black: 42 - 10 - 7  [0.771] 59
+...      White vs Black: 46 - 52 - 22  [0.475] 120
+Elo difference: 183.2 +/- 63.0, LOS: 100.0 %, DrawRatio: 18.3 %
+SPRT: llr 2.14 (72.8%), lbound -2.94, ubound 2.94
+Started game 128 of 2000 (old vs incr)
+Finished game 123 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 79 - 20 - 22  [0.744] 121
+Started game 129 of 2000 (incr vs old)
+Finished game 116 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 80 - 20 - 22  [0.746] 122
+Started game 130 of 2000 (old vs incr)
+Finished game 122 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 81 - 20 - 22  [0.748] 123
+Started game 131 of 2000 (incr vs old)
+Finished game 126 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 82 - 20 - 22  [0.750] 124
+Started game 132 of 2000 (old vs incr)
+Finished game 127 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 83 - 20 - 22  [0.752] 125
+Started game 133 of 2000 (incr vs old)
+Finished game 125 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 84 - 20 - 22  [0.754] 126
+Started game 134 of 2000 (old vs incr)
+Finished game 128 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 85 - 20 - 22  [0.756] 127
+Started game 135 of 2000 (incr vs old)
+Finished game 131 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 86 - 20 - 22  [0.758] 128
+Started game 136 of 2000 (old vs incr)
+Finished game 124 (old vs incr): 1/2-1/2 {Draw by fifty moves rule}
+Score of incr vs old: 86 - 20 - 23  [0.756] 129
+Started game 137 of 2000 (incr vs old)
+Finished game 132 (old vs incr): 0-1 {Black mates}
+Score of incr vs old: 87 - 20 - 23  [0.758] 130
+...      incr playing White: 40 - 10 - 15  [0.731] 65
+...      incr playing Black: 47 - 10 - 8  [0.785] 65
+...      White vs Black: 50 - 57 - 23  [0.473] 130
+Elo difference: 198.1 +/- 61.8, LOS: 100.0 %, DrawRatio: 17.7 %
+SPRT: llr 2.49 (84.5%), lbound -2.94, ubound 2.94
+Started game 138 of 2000 (old vs incr)
+Finished game 130 (old vs incr): 1/2-1/2 {Draw by insufficient mating material}
+Score of incr vs old: 87 - 20 - 24  [0.756] 131
+Started game 139 of 2000 (incr vs old)
+Finished game 134 (old vs incr): 1-0 {White mates}
+Score of incr vs old: 87 - 21 - 24  [0.750] 132
+Started game 140 of 2000 (old vs incr)
+Finished game 133 (incr vs old): 0-1 {Black mates}
+Score of incr vs old: 87 - 22 - 24  [0.744] 133
+Started game 141 of 2000 (incr vs old)
+Finished game 135 (incr vs old): 1-0 {White mates}
+Score of incr vs old: 88 - 22 - 24  [0.746] 134
+Started game 142 of 2000 (old vs incr)

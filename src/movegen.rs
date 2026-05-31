@@ -155,6 +155,8 @@ pub fn apply_move(board: &mut Board, mv: Move) {
     if !moving_white {
         board.fullmove = board.fullmove.saturating_add(1);
     }
+
+    board.zobrist = board.compute_zobrist();
 }
 
 fn piece_to_index(piece: Piece) -> Option<usize> {

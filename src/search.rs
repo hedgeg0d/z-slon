@@ -888,7 +888,7 @@ fn pvs(
 
     if !is_pv && !in_check && depth >= 3 && has_non_pawn_material(board) && static_eval >= beta {
         let mut null_board = board.clone();
-        null_board.white_to_move = !null_board.white_to_move;
+        null_board.toggle_side();
         let r = if depth >= 6 { 3 } else { 2 };
         let null_depth = depth.saturating_sub(1 + r);
         tables.acc_stack.carry_null(ply as usize);

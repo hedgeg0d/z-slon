@@ -1,8 +1,46 @@
 use std::fmt;
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use lazy_static::lazy_static;
+
 pub type Bitboard = u64;
+
+struct Zobrist {
+    pieces: [[u64; 64]; 12],
+    castle: [u64; 16],
+    ep: [u64; 8],
+    side: u64,
+}
+
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+lazy_static! {
+    static ref ZOBRIST: Zobrist = {
+        let mut s = 0x1234_5678_9ABC_DEF0u64;
+        let mut pieces = [[0u64; 64]; 12];
+        for p in pieces.iter_mut() {
+            for sq in p.iter_mut() {
+                *sq = splitmix64(&mut s);
+            }
+        }
+        let mut castle = [0u64; 16];
+        for c in castle.iter_mut() {
+            *c = splitmix64(&mut s);
+        }
+        let mut ep = [0u64; 8];
+        for e in ep.iter_mut() {
+            *e = splitmix64(&mut s);
+        }
+        let side = splitmix64(&mut s);
+        Zobrist { pieces, castle, ep, side }
+    };
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Piece {
@@ -71,6 +109,7 @@ pub struct Board {
     pub(crate) en_passant: Option<u8>,
     pub(crate) halfmove: u8,
     pub(crate) fullmove: u16,
+    pub(crate) zobrist: u64,
 }
 
 impl Hash for Board {
@@ -91,6 +130,7 @@ impl Board {
             en_passant: None,
             halfmove: 0,
             fullmove: 1,
+            zobrist: 0,
         };
         let parts: Vec<&str> = fen.split_whitespace().collect();
         let mut row = 7;
@@ -143,7 +183,37 @@ impl Board {
         if parts.len() > 5 {
             board.fullmove = parts[5].parse().unwrap_or(1);
         }
+        board.zobrist = board.compute_zobrist();
         board
+    }
+
+    pub fn compute_zobrist(&self) -> u64 {
+        let mut h = 0u64;
+        for (i, &bb) in self.pieces.iter().enumerate() {
+            let mut b = bb;
+            while b != 0 {
+                let sq = b.trailing_zeros() as usize;
+                h ^= ZOBRIST.pieces[i][sq];
+                b &= b - 1;
+            }
+        }
+        h ^= ZOBRIST.castle[(self.castling & 15) as usize];
+        if let Some(f) = self.en_passant {
+            h ^= ZOBRIST.ep[(f & 7) as usize];
+        }
+        if self.white_to_move {
+            h ^= ZOBRIST.side;
+        }
+        h
+    }
+
+    pub fn refresh_zobrist(&mut self) {
+        self.zobrist = self.compute_zobrist();
+    }
+
+    pub fn toggle_side(&mut self) {
+        self.white_to_move = !self.white_to_move;
+        self.zobrist ^= ZOBRIST.side;
     }
 
     pub fn square(&self, sq: u8) -> Piece {
@@ -254,9 +324,7 @@ impl Board {
     }
 
     pub fn position_hash(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
-        hasher.finish()
+        self.zobrist
     }
 
     pub fn is_draw_by_fifty_move(&self) -> bool {
