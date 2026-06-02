@@ -4,8 +4,6 @@ use nnue_rs::{Accumulator, Color as NnColor, Network, Piece as NnPiece, PieceKin
 
 use crate::board::Board;
 
-const SF_INDEX: [usize; 12] = [1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14];
-
 pub const EMBEDDED_NNUE: &[u8] = include_bytes!("../main_sf17.nnue");
 
 const NORMALIZE: i32 = 380;
@@ -102,7 +100,7 @@ impl NnueEvaluator {
     }
 
     pub fn new_accumulator(&self) -> Option<Accumulator> {
-        self.network.as_ref().map(|n| n.new_accumulator())
+        self.network.as_ref().map(|n| n.empty_accumulator())
     }
 
     fn kings_present(board: &Board) -> bool {
@@ -125,53 +123,12 @@ impl NnueEvaluator {
         parent: &Accumulator,
         child: &mut Accumulator,
     ) {
-        let network = match &self.network {
-            Some(n) => n,
-            None => return,
-        };
         if !Self::kings_present(child_board) {
             return;
         }
-        let white_king_moved = parent_board.pieces[5] != child_board.pieces[5];
-        let black_king_moved = parent_board.pieces[11] != child_board.pieces[11];
-        let mut removed = [(0u8, 0usize); 4];
-        let mut added = [(0u8, 0usize); 4];
-        let mut nr = 0;
-        let mut na = 0;
-        for i in 0..12 {
-            let sf = SF_INDEX[i];
-            let mut rem = parent_board.pieces[i] & !child_board.pieces[i];
-            while rem != 0 {
-                let sq = rem.trailing_zeros() as u8;
-                if nr < removed.len() {
-                    removed[nr] = (sq, sf);
-                }
-                nr += 1;
-                rem &= rem - 1;
-            }
-            let mut add = child_board.pieces[i] & !parent_board.pieces[i];
-            while add != 0 {
-                let sq = add.trailing_zeros() as u8;
-                if na < added.len() {
-                    added[na] = (sq, sf);
-                }
-                na += 1;
-                add &= add - 1;
-            }
+        if let Some(n) = &self.network {
+            n.update(parent_board, child_board, parent, child);
         }
-        if nr > removed.len() || na > added.len() {
-            network.refresh(child_board, child);
-            return;
-        }
-        network.update(
-            parent,
-            child,
-            child_board,
-            white_king_moved,
-            black_king_moved,
-            &removed[..nr],
-            &added[..na],
-        );
     }
 
     pub fn eval_acc(&self, acc: &Accumulator, board: &Board) -> Option<i32> {
@@ -179,13 +136,12 @@ impl NnueEvaluator {
         if board.king_sq(true) >= 64 || board.king_sq(false) >= 64 {
             return None;
         }
-        let piece_count = board.pieces.iter().map(|b| b.count_ones()).sum::<u32>() as usize;
         let stm = if board.is_white_to_move() {
             NnColor::White
         } else {
             NnColor::Black
         };
-        let value = network.evaluate_accumulator(acc, stm, piece_count);
+        let value = network.evaluate_accumulator(acc, stm);
         Some(self.normalize(value, board))
     }
 
@@ -274,15 +230,21 @@ mod incremental_tests {
         let ev = NnueEvaluator::new();
         let moves = [
             ("e2", "e4", None),
-            ("c7", "c5", None),
+            ("e7", "e5", None),
             ("g1", "f3", None),
-            ("d7", "d6", None),
-            ("d2", "d4", None),
-            ("c5", "d4", None),
-            ("f3", "d4", None),
-            ("g8", "f6", None),
-            ("b1", "c3", None),
+            ("b8", "c6", None),
+            ("f1", "c4", None),
+            ("f8", "c5", None),
             ("e1", "g1", None),
+            ("g8", "f6", None),
+            ("d2", "d3", None),
+            ("d7", "d6", None),
+            ("b1", "c3", None),
+            ("e8", "g8", None),
+            ("c1", "g5", None),
+            ("c8", "g4", None),
+            ("g5", "f6", None),
+            ("g7", "f6", None),
         ];
         let mut board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         let mut acc = ev.new_accumulator().unwrap();
