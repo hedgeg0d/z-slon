@@ -19,7 +19,7 @@ C_RESET=$'\033[0m'; C_DIM=$'\033[2m'; C_CYAN=$'\033[36m'; C_GRN=$'\033[32m'; C_B
 banner() {
 cat <<EOF
 ${C_CYAN}${C_BOLD} ┌──────────────────────────────────────────────┐
- │   z-slon  ·  lichess launcher  ·  v0.7.1     │
+ │   z-slon  ·  lichess launcher  ·  v0.7.2     │
  └──────────────────────────────────────────────┘${C_RESET}
  ${C_DIM}NNUE · pondering · ponderchain${C_RESET}
 EOF

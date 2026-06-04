@@ -104,6 +104,7 @@ impl Piece {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Board {
     pub(crate) pieces: [Bitboard; 12],
+    pub(crate) mailbox: [Piece; 64],
     pub(crate) white_to_move: bool,
     pub(crate) castling: u8,
     pub(crate) en_passant: Option<u8>,
@@ -125,6 +126,7 @@ impl Board {
     pub fn from_fen(fen: &str) -> Self {
         let mut board = Board {
             pieces: [0; 12],
+            mailbox: [Piece::Empty; 64],
             white_to_move: true,
             castling: 0,
             en_passant: None,
@@ -160,6 +162,7 @@ impl Board {
                 };
                 let sq = row * 8 + col;
                 board.pieces[idx] |= 1u64 << sq;
+                board.mailbox[sq] = piece;
                 col += 1;
             }
         }
@@ -216,27 +219,37 @@ impl Board {
         self.zobrist ^= ZOBRIST.side;
     }
 
-    pub fn square(&self, sq: u8) -> Piece {
-        for (i, &bb) in self.pieces.iter().enumerate() {
-            if (bb & (1u64 << sq)) != 0 {
-                return match i {
-                    0 => Piece::WPawn,
-                    1 => Piece::WKnight,
-                    2 => Piece::WBishop,
-                    3 => Piece::WRook,
-                    4 => Piece::WQueen,
-                    5 => Piece::WKing,
-                    6 => Piece::BPawn,
-                    7 => Piece::BKnight,
-                    8 => Piece::BBishop,
-                    9 => Piece::BRook,
-                    10 => Piece::BQueen,
-                    11 => Piece::BKing,
-                    _ => Piece::Empty,
-                };
-            }
+    #[inline]
+    pub(crate) fn add_piece(&mut self, sq: u8, piece: Piece) {
+        let idx = piece as usize;
+        self.pieces[idx] |= 1u64 << sq;
+        self.mailbox[sq as usize] = piece;
+        self.zobrist ^= ZOBRIST.pieces[idx][sq as usize];
+    }
+
+    #[inline]
+    pub(crate) fn remove_piece(&mut self, sq: u8) -> Piece {
+        let piece = self.mailbox[sq as usize];
+        if piece != Piece::Empty {
+            let idx = piece as usize;
+            self.pieces[idx] &= !(1u64 << sq);
+            self.mailbox[sq as usize] = Piece::Empty;
+            self.zobrist ^= ZOBRIST.pieces[idx][sq as usize];
         }
-        Piece::Empty
+        piece
+    }
+
+    #[inline]
+    pub(crate) fn xor_castle_ep_zobrist(&mut self) {
+        self.zobrist ^= ZOBRIST.castle[(self.castling & 15) as usize];
+        if let Some(f) = self.en_passant {
+            self.zobrist ^= ZOBRIST.ep[(f & 7) as usize];
+        }
+    }
+
+    #[inline]
+    pub fn square(&self, sq: u8) -> Piece {
+        self.mailbox[sq as usize]
     }
 
     pub fn king_sq(&self, white: bool) -> u8 {

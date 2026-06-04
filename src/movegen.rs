@@ -59,8 +59,7 @@ pub fn filter_legal_moves(board: &Board, moves: Vec<Move>) -> Vec<Move> {
         if is_ep {
             let dir = if white { -8 } else { 8 };
             let cap_sq = (m.to as i8 + dir) as u8;
-            let cap_idx = if white { 6 } else { 0 };
-            temp.pieces[cap_idx] &= !(1u64 << cap_sq);
+            temp.remove_piece(cap_sq);
         }
         let king_sq = temp.king_sq(white);
         if !is_square_attacked(&temp, king_sq, !white) {
@@ -113,13 +112,12 @@ pub fn apply_move(board: &mut Board, mv: Move) {
         && matches!(moving_piece, Piece::WPawn | Piece::BPawn)
         && (diff == 7 || diff == 9);
 
+    board.xor_castle_ep_zobrist();
+
     if is_en_passant {
         let dir = if moving_white { -8 } else { 8 };
         let captured_sq = (mv.to as i8 + dir) as u8;
-        captured_piece = board.square(captured_sq);
-        if let Some(idx) = piece_to_index(captured_piece) {
-            board.pieces[idx] &= !(1u64 << captured_sq);
-        }
+        captured_piece = board.remove_piece(captured_sq);
     }
 
     let is_castling = matches!(moving_piece, Piece::WKing | Piece::BKing) && diff == 2;
@@ -134,9 +132,8 @@ pub fn apply_move(board: &mut Board, mv: Move) {
             58 => (56, 59),
             _ => unreachable!("Invalid castling move destination"),
         };
-        let rook_idx = if moving_white { 3 } else { 9 };
-        board.pieces[rook_idx] &= !(1u64 << rook_from);
-        board.pieces[rook_idx] |= 1u64 << rook_to;
+        let rook = board.remove_piece(rook_from);
+        board.add_piece(rook_to, rook);
         if moving_white {
             board.castling &= !(1 | 2);
         } else {
@@ -156,25 +153,7 @@ pub fn apply_move(board: &mut Board, mv: Move) {
         board.fullmove = board.fullmove.saturating_add(1);
     }
 
-    board.zobrist = board.compute_zobrist();
-}
-
-fn piece_to_index(piece: Piece) -> Option<usize> {
-    match piece {
-        Piece::WPawn => Some(0),
-        Piece::WKnight => Some(1),
-        Piece::WBishop => Some(2),
-        Piece::WRook => Some(3),
-        Piece::WQueen => Some(4),
-        Piece::WKing => Some(5),
-        Piece::BPawn => Some(6),
-        Piece::BKnight => Some(7),
-        Piece::BBishop => Some(8),
-        Piece::BRook => Some(9),
-        Piece::BQueen => Some(10),
-        Piece::BKing => Some(11),
-        Piece::Empty => None,
-    }
+    board.xor_castle_ep_zobrist();
 }
 
 fn update_castling_rights(board: &mut Board, moving_piece: Piece, from: u8, to: u8, captured: Piece) {
@@ -652,43 +631,13 @@ fn is_square_attacked(board: &Board, sq: u8, by_white: bool) -> bool {
 
 fn make_move(board: &mut Board, m: Move) {
     let piece = board.square(m.from);
-    let from_mask = !(1u64 << m.from);
-    let to_mask = !(1u64 << m.to);
-    let idx = match piece {
-        Piece::WPawn => 0,
-        Piece::WKnight => 1,
-        Piece::WBishop => 2,
-        Piece::WRook => 3,
-        Piece::WQueen => 4,
-        Piece::WKing => 5,
-        Piece::BPawn => 6,
-        Piece::BKnight => 7,
-        Piece::BBishop => 8,
-        Piece::BRook => 9,
-        Piece::BQueen => 10,
-        Piece::BKing => 11,
-        _ => return,
-    };
-    for bb in board.pieces.iter_mut() {
-        *bb &= to_mask;
+    if piece == Piece::Empty {
+        return;
     }
-    board.pieces[idx] &= from_mask;
-    if let Some(promo) = m.promotion {
-        let promo_idx = match promo {
-            Piece::WQueen => 4,
-            Piece::WRook => 3,
-            Piece::WBishop => 2,
-            Piece::WKnight => 1,
-            Piece::BQueen => 10,
-            Piece::BRook => 9,
-            Piece::BBishop => 8,
-            Piece::BKnight => 7,
-            _ => return,
-        };
-        board.pieces[promo_idx] |= 1u64 << m.to;
-    } else {
-        board.pieces[idx] |= 1u64 << m.to;
-    }
+    board.remove_piece(m.to);
+    board.remove_piece(m.from);
+    let placed = m.promotion.unwrap_or(piece);
+    board.add_piece(m.to, placed);
     if piece == Piece::WPawn || piece == Piece::BPawn {
         let rank_from = m.from / 8;
         let rank_to = m.to / 8;
@@ -700,7 +649,7 @@ fn make_move(board: &mut Board, m: Move) {
     } else {
         board.en_passant = None;
     }
-    board.white_to_move = !board.white_to_move;
+    board.toggle_side();
 }
 
 
@@ -792,6 +741,39 @@ mod perft_tests {
                 );
             }
         }
+    }
+
+    fn zobrist_dfs(board: &Board, depth: u32) {
+        if depth == 0 {
+            return;
+        }
+        for mv in legal_moves(board) {
+            let mut b = board.clone();
+            apply_move(&mut b, mv);
+            assert_eq!(
+                b.zobrist,
+                b.compute_zobrist(),
+                "zobrist mismatch after {} from fen={}",
+                format_move(mv),
+                board.to_fen()
+            );
+            for sq in 0..64u8 {
+                let bb_piece = (0..12)
+                    .find(|&i| b.pieces[i] & (1u64 << sq) != 0)
+                    .map(|i| i as usize);
+                let mb = b.mailbox[sq as usize];
+                let mb_idx = if mb == Piece::Empty { None } else { Some(mb as usize) };
+                assert_eq!(bb_piece, mb_idx, "mailbox mismatch sq {} fen={}", sq, b.to_fen());
+            }
+            zobrist_dfs(&b, depth - 1);
+        }
+    }
+
+    #[test]
+    fn zobrist_consistency() {
+        zobrist_dfs(&Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"), 4);
+        zobrist_dfs(&Board::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"), 3);
+        zobrist_dfs(&Board::from_fen("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1"), 3);
     }
 
     #[test]
