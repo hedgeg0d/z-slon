@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::board::Board;
 use crate::movegen::{apply_move, legal_moves, Move};
-use crate::search::search_position;
+use crate::search::{search_position, MATE_SCORE, MAX_PLY};
 use crate::nnue::NnueEvaluator;
 use crate::polyglot_integration::OptimizedPolyglotBook;
 use tokio::sync::mpsc;
@@ -142,7 +142,7 @@ impl UciEngine {
 
         match parts[0] {
             "uci" => {
-                uci_println!("id name z-slon 0.7.0");
+                uci_println!("id name z-slon 0.7.1");
                 uci_println!("id author hedgegod");
                 uci_println!("option name Hash type spin default 16 min 1 max 33554432");
                 uci_println!("option name Threads type spin default 1 min 1 max 512");
@@ -489,6 +489,7 @@ impl UciEngine {
             let mut best_depth = 0;
             let mut pv_index = 1;
             let mut last_depth = 0;
+            let mut last_summary = None;
 
             while let Some(event) = rx.recv().await {
                 if event.depth != last_depth {
@@ -521,26 +522,42 @@ impl UciEngine {
                 }
                 
                 let elapsed = start_time.elapsed().as_millis() as u64;
-                
-                uci_print!("info depth {} multipv {} score cp {} nodes {}", 
-                    event.depth, pv_index, event.score, event.nodes);
-                
+                let nps = if elapsed > 0 { (event.nodes as u64 * 1000) / elapsed } else { 0 };
+
+                uci_print!("info depth {} multipv {} score {} nodes {}",
+                    event.depth, pv_index, format_score(event.score), event.nodes);
+
                 if elapsed > 0 {
-                    let nps = (event.nodes as u64 * 1000) / elapsed;
                     uci_print!(" nps {} time {}", nps, elapsed);
                 }
-                
+
+                let mut pv_str = String::new();
                 if event.pv_len > 0 {
-                    uci_print!(" pv");
+                    pv_str.push_str(" pv");
                     for i in 0..event.pv_len {
                         if let Some(mv) = event.pv[i] {
-                            uci_print!(" {}", move_to_uci(mv));
+                            pv_str.push(' ');
+                            pv_str.push_str(&move_to_uci(mv));
                         }
                     }
+                    uci_print!("{}", pv_str);
                 }
-                
+
                 uci_println!();
+
+                if pv_index == 1 {
+                    last_summary = Some((event.depth, event.score, event.nodes, nps, elapsed, pv_str));
+                }
                 pv_index += 1;
+            }
+
+            if let Some((d, score, nodes, nps, elapsed, pv_str)) = last_summary {
+                uci_print!("info depth {} score {} nodes {}", d, format_score(score), nodes);
+                if elapsed > 0 {
+                    uci_print!(" nps {} time {}", nps, elapsed);
+                }
+                uci_print!("{}", pv_str);
+                uci_println!();
             }
 
             let _ = handle.await;
@@ -710,6 +727,18 @@ impl UciEngine {
         self.board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         self.clear_position_history();
         self.update_position_history();
+    }
+}
+
+fn format_score(score: i32) -> String {
+    let mate_threshold = MATE_SCORE - MAX_PLY as i32;
+    if score.abs() >= mate_threshold {
+        let plies = MATE_SCORE - score.abs();
+        let moves = (plies + 1) / 2;
+        let signed = if score > 0 { moves } else { -moves };
+        format!("mate {}", signed)
+    } else {
+        format!("cp {}", score)
     }
 }
 

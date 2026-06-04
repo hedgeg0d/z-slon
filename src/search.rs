@@ -7,11 +7,11 @@ use crate::movegen::{apply_move, is_in_check, legal_captures, legal_moves, Move}
 use crate::nnue::NnueEvaluator;
 use nnue_rs::Accumulator;
 
-const MATE_SCORE: i32 = 1_000_000;
+pub const MATE_SCORE: i32 = 1_000_000;
 const NEG_INF: i32 = -MATE_SCORE;
 const POS_INF: i32 = MATE_SCORE;
 
-const MAX_PLY: usize = 128;
+pub const MAX_PLY: usize = 128;
 const MAX_KILLERS: usize = 2;
 const ACC_MAX_PLY: usize = 160;
 
