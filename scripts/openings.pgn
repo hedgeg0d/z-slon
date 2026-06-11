@@ -1,0 +1,119 @@
+[Event "Ruy Lopez"]
+[Result "*"]
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *
+
+[Event "Italian"]
+[Result "*"]
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 *
+
+[Event "Sicilian Open"]
+[Result "*"]
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 *
+
+[Event "Sicilian Accelerated Dragon"]
+[Result "*"]
+1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 g6 *
+
+[Event "French Winawer"]
+[Result "*"]
+1. e4 e6 2. d4 d5 3. Nc3 Bb4 *
+
+[Event "French Tarrasch"]
+[Result "*"]
+1. e4 e6 2. d4 d5 3. Nd2 Nf6 *
+
+[Event "Caro-Kann Advance"]
+[Result "*"]
+1. e4 c6 2. d4 d5 3. e5 Bf5 *
+
+[Event "Caro-Kann Classical"]
+[Result "*"]
+1. e4 c6 2. d4 d5 3. Nc3 dxe4 4. Nxe4 Bf5 *
+
+[Event "QGD"]
+[Result "*"]
+1. d4 d5 2. c4 e6 3. Nc3 Nf6 *
+
+[Event "Slav"]
+[Result "*"]
+1. d4 d5 2. c4 c6 3. Nf3 Nf6 *
+
+[Event "Nimzo-Indian"]
+[Result "*"]
+1. d4 Nf6 2. c4 e6 3. Nc3 Bb4 *
+
+[Event "King's Indian"]
+[Result "*"]
+1. d4 Nf6 2. c4 g6 3. Nc3 Bg7 4. e4 d6 *
+
+[Event "Gruenfeld"]
+[Result "*"]
+1. d4 Nf6 2. c4 g6 3. Nc3 d5 *
+
+[Event "Queen's Indian"]
+[Result "*"]
+1. d4 Nf6 2. c4 e6 3. Nf3 b6 *
+
+[Event "English Four Knights"]
+[Result "*"]
+1. c4 e5 2. Nc3 Nf6 3. Nf3 Nc6 *
+
+[Event "English KID setup"]
+[Result "*"]
+1. c4 Nf6 2. Nc3 g6 3. g3 Bg7 *
+
+[Event "Catalan-ish Reti"]
+[Result "*"]
+1. Nf3 d5 2. g3 Nf6 3. Bg2 e6 *
+
+[Event "Petroff"]
+[Result "*"]
+1. e4 e5 2. Nf3 Nf6 3. Nxe5 d6 4. Nf3 Nxe4 *
+
+[Event "Pirc"]
+[Result "*"]
+1. e4 d6 2. d4 Nf6 3. Nc3 g6 *
+
+[Event "Modern"]
+[Result "*"]
+1. e4 g6 2. d4 Bg7 3. Nc3 d6 *
+
+[Event "Dutch Leningrad"]
+[Result "*"]
+1. d4 f5 2. g3 Nf6 3. Bg2 g6 *
+
+[Event "Colle"]
+[Result "*"]
+1. d4 d5 2. Nf3 Nf6 3. e3 e6 4. Bd3 c5 *
+
+[Event "Sicilian Alapin"]
+[Result "*"]
+1. e4 c5 2. c3 d5 3. exd5 Qxd5 *
+
+[Event "Closed Sicilian"]
+[Result "*"]
+1. e4 c5 2. Nc3 Nc6 3. g3 g6 *
+
+[Event "Torre"]
+[Result "*"]
+1. d4 Nf6 2. Nf3 e6 3. Bg5 c5 *
+
+[Event "London"]
+[Result "*"]
+1. d4 d5 2. Bf4 Nf6 3. e3 c5 *
+
+[Event "Vienna Gambit"]
+[Result "*"]
+1. e4 e5 2. Nc3 Nf6 3. f4 d5 *
+
+[Event "Bishop's Opening"]
+[Result "*"]
+1. e4 e5 2. Bc4 Nf6 3. d3 c6 *
+
+[Event "Symmetrical English"]
+[Result "*"]
+1. Nf3 c5 2. c4 Nc6 3. d4 cxd4 4. Nxd4 Nf6 *
+
+[Event "Dutch Stonewall-ish"]
+[Result "*"]
+1. d4 e6 2. c4 f5 3. g3 Nf6 *

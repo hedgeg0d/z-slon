@@ -587,7 +587,7 @@ async fn run_continuous_search(
         
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = tokio::task::spawn_blocking(move || {
-            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, 1, |event| {
+            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, 1, std::sync::Arc::new(crate::search::SearchLimits::unbounded()), |event| {
                 let _ = tx.send(event);
             })
         });

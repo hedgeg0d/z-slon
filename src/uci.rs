@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::board::Board;
 use crate::movegen::{apply_move, legal_moves, Move};
-use crate::search::{search_position, MATE_SCORE, MAX_PLY};
+use crate::search::{search_position, SearchLimits, MATE_SCORE, MAX_PLY};
 use crate::nnue::NnueEvaluator;
 use crate::polyglot_integration::OptimizedPolyglotBook;
 use tokio::sync::mpsc;
@@ -20,8 +20,11 @@ pub struct UciEngine {
     cancel_flag: Arc<AtomicBool>,
     pondering: Arc<AtomicBool>,
     ponder_enabled: AtomicBool,
+    modern_tm: AtomicBool,
+    move_overhead: AtomicU32,
     ponder_start_time: Option<Instant>,
-    ponder_time_params: Option<(Option<u64>, Option<u64>, Option<u64>)>,
+    ponder_time_params: Option<(Option<u64>, Option<u64>, Option<(u64, u64)>)>,
+    search_limits: Arc<SearchLimits>,
     expected_ponder_move: Option<Move>,
     position_history: Vec<u64>,
     nnue: NnueEvaluator,
@@ -42,8 +45,11 @@ impl UciEngine {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             pondering: Arc::new(AtomicBool::new(false)),
             ponder_enabled: AtomicBool::new(false),
+            modern_tm: AtomicBool::new(true),
+            move_overhead: AtomicU32::new(30),
             ponder_start_time: None,
             ponder_time_params: None,
+            search_limits: Arc::new(SearchLimits::unbounded()),
             expected_ponder_move: None,
             position_history: Vec::new(),
             nnue: NnueEvaluator::new(),
@@ -63,8 +69,11 @@ impl UciEngine {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             pondering: Arc::new(AtomicBool::new(false)),
             ponder_enabled: AtomicBool::new(false),
+            modern_tm: AtomicBool::new(true),
+            move_overhead: AtomicU32::new(30),
             ponder_start_time: None,
             ponder_time_params: None,
+            search_limits: Arc::new(SearchLimits::unbounded()),
             expected_ponder_move: None,
             position_history: Vec::new(),
             nnue,
@@ -149,10 +158,11 @@ impl UciEngine {
                 uci_println!("option name UCI_Chess960 type check default false");
                 uci_println!("option name Ponder type check default false");
                 uci_println!("option name MultiPV type spin default 1 min 1 max 500");
-                uci_println!("option name Move Overhead type spin default 10 min 0 max 5000");
+                uci_println!("option name Move Overhead type spin default 30 min 0 max 5000");
                 uci_println!("option name nodestime type spin default 0 min 0 max 10000");
                 uci_println!("option name EvalFile type string default <embedded>");
                 uci_println!("option name Book type string default <empty>");
+                uci_println!("option name ModernTM type check default true");
                 uci_println!("uciok");
             }
             "isready" => {
@@ -174,12 +184,13 @@ impl UciEngine {
             "ponderhit" => {
                 if self.pondering.load(Ordering::SeqCst) && self.searching.load(Ordering::SeqCst) {
                     self.pondering.store(false, Ordering::SeqCst);
-                    let mt = self.ponder_time_params.and_then(|p| p.2);
-                    if let Some(mt) = mt {
+                    let alloc = self.ponder_time_params.and_then(|p| p.2);
+                    if let Some((soft, hard)) = alloc {
+                        self.search_limits.arm(soft);
                         let cancel_clone = Arc::clone(&self.cancel_flag);
                         let pondering_clone = Arc::clone(&self.pondering);
                         tokio::spawn(async move {
-                            tokio::time::sleep(Duration::from_millis(mt)).await;
+                            tokio::time::sleep(Duration::from_millis(hard)).await;
                             if !pondering_clone.load(Ordering::SeqCst) {
                                 cancel_clone.store(true, Ordering::SeqCst);
                             }
@@ -315,6 +326,7 @@ impl UciEngine {
         let mut btime = None;
         let mut _winc = None;
         let mut _binc = None;
+        let mut movestogo: Option<u64> = None;
         let mut _infinite = false;
 
         let mut i = 0;
@@ -384,6 +396,16 @@ impl UciEngine {
                         i += 1;
                     }
                 }
+                "movestogo" => {
+                    if i + 1 < parts.len() {
+                        if let Ok(m) = parts[i + 1].parse::<u64>() {
+                            movestogo = Some(m);
+                        }
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
                 "infinite" => {
                     _infinite = true;
                     depth = 100;
@@ -396,23 +418,44 @@ impl UciEngine {
         }
         let our_time = if self.board.is_white_to_move() { wtime } else { btime };
         let our_inc = if self.board.is_white_to_move() { _winc } else { _binc }.unwrap_or(0);
-        let computed_mt = our_time.map(|time_left| {
-            let overhead = 30u64;
-            let usable = time_left.saturating_sub(overhead);
-            let target = usable / 25 + our_inc * 3 / 4;
-            let cap = (usable / 2).max(50);
-            target.clamp(50, cap)
+        let modern_tm = self.modern_tm.load(Ordering::SeqCst);
+        let overhead = self.move_overhead.load(Ordering::SeqCst) as u64;
+        let fullmove = self.board.fullmove_number() as u64;
+        let time_alloc = our_time.map(|time_left| {
+            let usable = time_left.saturating_sub(overhead).max(1);
+            if !modern_tm {
+                let target = usable / 25 + our_inc * 3 / 4;
+                let cap = (usable / 2).max(50);
+                let mt = target.clamp(50, cap);
+                return (u64::MAX, mt);
+            }
+            let horizon = movestogo.map(|m| m.clamp(2, 40)).unwrap_or_else(|| {
+                let phase = (38u64.saturating_sub(fullmove / 2)).clamp(20, 38);
+                if our_inc == 0 {
+                    phase + 6
+                } else {
+                    phase
+                }
+            });
+            let base = usable / horizon + our_inc * 3 / 4;
+            let soft = base.min(usable / 4).max(10);
+            let hard = (base * 3).min(usable / 4).max(20);
+            (soft, hard)
         });
 
+        let limits = Arc::new(SearchLimits::unbounded());
+        self.search_limits = Arc::clone(&limits);
+
         if movetime.is_none() && !is_ponder {
-            if let Some(mt) = computed_mt {
-                movetime = Some(mt);
+            if let Some((soft, hard)) = time_alloc {
+                limits.arm(soft);
+                movetime = Some(hard);
                 depth = 100;
             }
         }
 
         if is_ponder {
-            self.ponder_time_params = Some((wtime, btime, computed_mt));
+            self.ponder_time_params = Some((wtime, btime, time_alloc));
             self.ponder_start_time = Some(Instant::now());
             depth = 100;
             movetime = None;
@@ -475,7 +518,7 @@ impl UciEngine {
         
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = tokio::task::spawn_blocking(move || {
-            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, multi_pv, |event| {
+            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, multi_pv, limits, |event| {
                 let _ = tx.send(event);
             })
         });
@@ -627,6 +670,10 @@ impl UciEngine {
                             self.handle_evalfile_export(&value);
                         }
                     }
+                    "moderntm" => {
+                        self.modern_tm
+                            .store(value.to_lowercase() == "true", Ordering::SeqCst);
+                    }
                     "multipv" => {
                         if !value.is_empty() {
                             if let Ok(pv_count) = value.parse::<u32>() {
@@ -639,7 +686,13 @@ impl UciEngine {
                         self.ponder_enabled.store(enabled, Ordering::SeqCst);
                         uci_println!("info string Ponder {}", if enabled { "enabled" } else { "disabled" });
                     }
-                    "uci_chess960" | "move overhead" | "nodestime" => {
+                    "move overhead" => {
+                        if let Ok(mo) = value.parse::<u32>() {
+                            self.move_overhead.store(mo.min(5000), Ordering::SeqCst);
+                            uci_println!("info string Move Overhead set to {} ms", mo.min(5000));
+                        }
+                    }
+                    "uci_chess960" | "nodestime" => {
                         uci_println!("info string Option {} not yet implemented", option_name);
                     }
                     _ => {}
@@ -649,9 +702,18 @@ impl UciEngine {
     }
     
     fn handle_evalfile_export(&mut self, path: &str) {
-        use crate::nnue::EMBEDDED_NNUE;
-        
-        match std::fs::write(path, EMBEDDED_NNUE) {
+        use crate::nnue::EMBEDDED_NNUE_PARTS;
+
+        let result = (|| -> std::io::Result<()> {
+            use std::io::Write;
+            let mut f = std::fs::File::create(path)?;
+            for part in EMBEDDED_NNUE_PARTS {
+                f.write_all(part)?;
+            }
+            Ok(())
+        })();
+
+        match result {
             Ok(_) => {
                 uci_println!("info string Exported embedded NNUE to: {}", path);
                 self.nnue_file = Some(path.to_string());
