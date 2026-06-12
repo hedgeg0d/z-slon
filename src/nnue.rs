@@ -4,7 +4,7 @@ use nnue_rs::{Accumulator, Color as NnColor, Network, Piece as NnPiece, PieceKin
 
 use crate::board::Board;
 
-pub const EMBEDDED_NNUE: &[u8] = include_bytes!("../main_sf17.nnue");
+pub const EMBEDDED_NNUE_PARTS: [&[u8]; 1] = [include_bytes!("../main_sf17.nnue")];
 
 const NORMALIZE: i32 = 380;
 
@@ -60,7 +60,7 @@ pub struct NnueEvaluator {
 impl NnueEvaluator {
     pub fn new() -> Self {
         Self {
-            network: Network::from_bytes(EMBEDDED_NNUE).ok().map(Arc::new),
+            network: Network::from_bytes(EMBEDDED_NNUE_PARTS[0]).ok().map(Arc::new),
         }
     }
 

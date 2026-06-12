@@ -14,7 +14,7 @@ use std::time::Duration;
 use board::{Board, Piece};
 use eval::{evaluate, EvaluationBreakdown};
 use movegen::{apply_move, is_in_check, legal_moves, Move};
-use search::search_position;
+use search::{search_position, Tt, DEFAULT_TT_MB};
 use nnue::NnueEvaluator;
 use tokio::sync::mpsc;
 use rustyline::error::ReadlineError;
@@ -555,6 +555,7 @@ async fn run_continuous_search(
     cancel_flag: Arc<AtomicBool>,
     position_changed: Arc<AtomicBool>,
 ) {
+    let tt = Arc::new(Tt::new(DEFAULT_TT_MB));
     loop {
         if !eval_running.load(Ordering::SeqCst) {
             break;
@@ -585,9 +586,10 @@ async fn run_continuous_search(
             }
         };
         
+        let tt_clone = Arc::clone(&tt);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = tokio::task::spawn_blocking(move || {
-            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, 1, |event| {
+            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, 1, tt_clone, |event| {
                 let _ = tx.send(event);
             })
         });

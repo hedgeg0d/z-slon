@@ -18,6 +18,7 @@ panic = "abort"
 tokio = { version = "1", features = ["full"] }
 rustyline = "14"
 clap = { version = "4", features = ["derive"] }
-nnue-rs = "0.3.1"
+nnue-rs = "0.4.0"
+arrayvec = "0.7"
 polyglot-book-rs = "0.1.0"
 lazy_static = "1.5"

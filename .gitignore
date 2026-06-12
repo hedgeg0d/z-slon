@@ -27,3 +27,5 @@ sprt_simd*.log
 z-slon-simd
 z-slon-presimd
 sprt_*.log
+main_sf18.nnue
+baselines/

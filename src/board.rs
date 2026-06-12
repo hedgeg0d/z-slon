@@ -219,6 +219,13 @@ impl Board {
         self.zobrist ^= ZOBRIST.side;
     }
 
+    pub fn make_null_move(&mut self) {
+        self.xor_castle_ep_zobrist();
+        self.en_passant = None;
+        self.xor_castle_ep_zobrist();
+        self.toggle_side();
+    }
+
     #[inline]
     pub(crate) fn add_piece(&mut self, sq: u8, piece: Piece) {
         let idx = piece as usize;

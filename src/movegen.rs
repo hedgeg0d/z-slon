@@ -1,12 +1,133 @@
 use std::fmt;
 
+use arrayvec::ArrayVec;
+
 use crate::board::{Board, Piece};
+
+pub type MoveList = ArrayVec<Move, 256>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Move {
     pub from: u8,
     pub to: u8,
     pub promotion: Option<Piece>,
+}
+
+const fn build_knight_attacks() -> [u64; 64] {
+    let mut table = [0u64; 64];
+    let deltas: [(i8, i8); 8] = [
+        (-2, -1), (-2, 1), (-1, -2), (-1, 2),
+        (1, -2), (1, 2), (2, -1), (2, 1),
+    ];
+    let mut sq = 0;
+    while sq < 64 {
+        let r = (sq / 8) as i8;
+        let f = (sq % 8) as i8;
+        let mut i = 0;
+        while i < 8 {
+            let (dr, df) = deltas[i];
+            let nr = r + dr;
+            let nf = f + df;
+            if nr >= 0 && nr < 8 && nf >= 0 && nf < 8 {
+                table[sq] |= 1u64 << (nr * 8 + nf);
+            }
+            i += 1;
+        }
+        sq += 1;
+    }
+    table
+}
+
+const fn build_king_attacks() -> [u64; 64] {
+    let mut table = [0u64; 64];
+    let mut sq = 0;
+    while sq < 64 {
+        let r = (sq / 8) as i8;
+        let f = (sq % 8) as i8;
+        let mut dr = -1i8;
+        while dr <= 1 {
+            let mut df = -1i8;
+            while df <= 1 {
+                if !(dr == 0 && df == 0) {
+                    let nr = r + dr;
+                    let nf = f + df;
+                    if nr >= 0 && nr < 8 && nf >= 0 && nf < 8 {
+                        table[sq] |= 1u64 << (nr * 8 + nf);
+                    }
+                }
+                df += 1;
+            }
+            dr += 1;
+        }
+        sq += 1;
+    }
+    table
+}
+
+const fn build_pawn_attacks() -> [[u64; 64]; 2] {
+    let mut table = [[0u64; 64]; 2];
+    let mut sq = 0i32;
+    while sq < 64 {
+        let f = sq % 8;
+        if sq + 7 < 64 && f > 0 {
+            table[0][sq as usize] |= 1u64 << (sq + 7);
+        }
+        if sq + 9 < 64 && f < 7 {
+            table[0][sq as usize] |= 1u64 << (sq + 9);
+        }
+        if sq - 7 >= 0 && f < 7 {
+            table[1][sq as usize] |= 1u64 << (sq - 7);
+        }
+        if sq - 9 >= 0 && f > 0 {
+            table[1][sq as usize] |= 1u64 << (sq - 9);
+        }
+        sq += 1;
+    }
+    table
+}
+
+pub(crate) static KNIGHT_ATTACKS: [u64; 64] = build_knight_attacks();
+pub(crate) static KING_ATTACKS: [u64; 64] = build_king_attacks();
+pub(crate) static PAWN_ATTACKS: [[u64; 64]; 2] = build_pawn_attacks();
+
+fn ray_attacks(sq: u8, occupied: u64, directions: &[(i8, i8); 4]) -> u64 {
+    let from_rank = (sq / 8) as i8;
+    let from_file = (sq % 8) as i8;
+    let mut attacks = 0u64;
+    for &(dr, df) in directions {
+        let mut r = from_rank + dr;
+        let mut f = from_file + df;
+        while r >= 0 && r < 8 && f >= 0 && f < 8 {
+            let bit = 1u64 << (r * 8 + f);
+            attacks |= bit;
+            if (occupied & bit) != 0 {
+                break;
+            }
+            r += dr;
+            f += df;
+        }
+    }
+    attacks
+}
+
+pub(crate) fn bishop_attacks(sq: u8, occupied: u64) -> u64 {
+    ray_attacks(sq, occupied, &[(1, 1), (1, -1), (-1, 1), (-1, -1)])
+}
+
+pub(crate) fn rook_attacks(sq: u8, occupied: u64) -> u64 {
+    ray_attacks(sq, occupied, &[(1, 0), (-1, 0), (0, 1), (0, -1)])
+}
+
+pub(crate) fn attackers_to(board: &Board, sq: u8, occupied: u64) -> u64 {
+    let s = sq as usize;
+    let diag_sliders = board.pieces[2] | board.pieces[4] | board.pieces[8] | board.pieces[10];
+    let orth_sliders = board.pieces[3] | board.pieces[4] | board.pieces[9] | board.pieces[10];
+    (PAWN_ATTACKS[1][s] & board.pieces[0])
+        | (PAWN_ATTACKS[0][s] & board.pieces[6])
+        | (KNIGHT_ATTACKS[s] & (board.pieces[1] | board.pieces[7]))
+        | (KING_ATTACKS[s] & (board.pieces[5] | board.pieces[11]))
+        | (bishop_attacks(sq, occupied) & diag_sliders)
+        | (rook_attacks(sq, occupied) & orth_sliders)
 }
 
 impl fmt::Display for Move {
@@ -31,47 +152,114 @@ impl fmt::Display for Move {
     }
 }
 
-pub fn generate_moves(board: &Board) -> Vec<Move> {
+pub fn generate_moves(board: &Board) -> MoveList {
     let white = board.is_white_to_move();
-    let mut moves = Vec::new();
-    moves.extend(generate_pawn_moves(board, white));
-    moves.extend(generate_knight_moves(board, white));
-    moves.extend(generate_bishop_moves(board, white));
-    moves.extend(generate_rook_moves(board, white));
-    moves.extend(generate_queen_moves(board, white));
-    moves.extend(generate_king_moves(board, white));
+    let mut moves = MoveList::new();
+    generate_pawn_moves(board, white, &mut moves);
+    generate_knight_moves(board, white, &mut moves);
+    generate_bishop_moves(board, white, &mut moves);
+    generate_rook_moves(board, white, &mut moves);
+    generate_queen_moves(board, white, &mut moves);
+    generate_king_moves(board, white, &mut moves);
     moves
 }
 
-pub fn filter_legal_moves(board: &Board, moves: Vec<Move>) -> Vec<Move> {
-    let mut legal = Vec::new();
-    let white = board.is_white_to_move();
-    for m in moves {
-        let mut temp = board.clone();
-        let moving = temp.square(m.from);
-        let is_ep = temp.square(m.to) == Piece::Empty
-            && matches!(moving, Piece::WPawn | Piece::BPawn)
-            && {
-                let d = (m.from as i8 - m.to as i8).abs();
-                d == 7 || d == 9
-            };
-        make_move(&mut temp, m);
-        if is_ep {
-            let dir = if white { -8 } else { 8 };
-            let cap_sq = (m.to as i8 + dir) as u8;
-            temp.remove_piece(cap_sq);
-        }
-        let king_sq = temp.king_sq(white);
-        if !is_square_attacked(&temp, king_sq, !white) {
-            legal.push(m);
-        }
+fn move_is_legal_slow(board: &Board, m: Move, white: bool) -> bool {
+    let mut temp = board.clone();
+    let moving = temp.square(m.from);
+    let is_ep = temp.square(m.to) == Piece::Empty
+        && matches!(moving, Piece::WPawn | Piece::BPawn)
+        && {
+            let d = (m.from as i8 - m.to as i8).abs();
+            d == 7 || d == 9
+        };
+    make_move(&mut temp, m);
+    if is_ep {
+        let dir = if white { -8 } else { 8 };
+        let cap_sq = (m.to as i8 + dir) as u8;
+        temp.remove_piece(cap_sq);
     }
-    legal
+    let king_sq = temp.king_sq(white);
+    !is_square_attacked(&temp, king_sq, !white)
 }
 
-pub fn legal_moves(board: &Board) -> Vec<Move> {
-    let pseudo = generate_moves(board);
-    filter_legal_moves(board, pseudo)
+pub fn filter_legal_moves(board: &Board, mut moves: MoveList) -> MoveList {
+    let white = board.is_white_to_move();
+    moves.retain(|m| move_is_legal_slow(board, *m, white));
+    moves
+}
+
+fn is_ep_move(board: &Board, m: Move) -> bool {
+    matches!(board.square(m.from), Piece::WPawn | Piece::BPawn)
+        && board.square(m.to) == Piece::Empty
+        && (m.from % 8) != (m.to % 8)
+}
+
+fn compute_pinned(board: &Board, white: bool, king_sq: u8) -> u64 {
+    let kr = (king_sq / 8) as i8;
+    let kf = (king_sq % 8) as i8;
+    let mut pinned = 0u64;
+    const DIRS: [(i8, i8, bool); 8] = [
+        (1, 0, true), (-1, 0, true), (0, 1, true), (0, -1, true),
+        (1, 1, false), (1, -1, false), (-1, 1, false), (-1, -1, false),
+    ];
+    for (dr, df, orth) in DIRS {
+        let mut r = kr + dr;
+        let mut f = kf + df;
+        let mut blocker: Option<u8> = None;
+        while r >= 0 && r < 8 && f >= 0 && f < 8 {
+            let sq = (r * 8 + f) as u8;
+            let piece = board.square(sq);
+            if piece != Piece::Empty {
+                if piece.is_white() == white {
+                    if blocker.is_some() {
+                        break;
+                    }
+                    blocker = Some(sq);
+                } else {
+                    if let Some(b) = blocker {
+                        let is_pinner = if orth {
+                            matches!(piece, Piece::WRook | Piece::BRook | Piece::WQueen | Piece::BQueen)
+                        } else {
+                            matches!(piece, Piece::WBishop | Piece::BBishop | Piece::WQueen | Piece::BQueen)
+                        };
+                        if is_pinner {
+                            pinned |= 1u64 << b;
+                        }
+                    }
+                    break;
+                }
+            }
+            r += dr;
+            f += df;
+        }
+    }
+    pinned
+}
+
+fn filter_with_pins(board: &Board, mut pseudo: MoveList) -> MoveList {
+    let white = board.is_white_to_move();
+    let king_sq = board.king_sq(white);
+    if king_sq >= 64 {
+        return filter_legal_moves(board, pseudo);
+    }
+    let in_check = is_square_attacked(board, king_sq, !white);
+    let pinned = compute_pinned(board, white, king_sq);
+    pseudo.retain(|m| {
+        let m = *m;
+        let is_king = m.from == king_sq;
+        let is_pinned = (pinned >> m.from) & 1 != 0;
+        if !in_check && !is_king && !is_pinned && !is_ep_move(board, m) {
+            true
+        } else {
+            move_is_legal_slow(board, m, white)
+        }
+    });
+    pseudo
+}
+
+pub fn legal_moves(board: &Board) -> MoveList {
+    filter_with_pins(board, generate_moves(board))
 }
 
 pub fn is_capture_move(board: &Board, m: Move) -> bool {
@@ -89,12 +277,10 @@ pub fn is_capture_move(board: &Board, m: Move) -> bool {
     false
 }
 
-pub fn legal_captures(board: &Board) -> Vec<Move> {
-    let pseudo: Vec<Move> = generate_moves(board)
-        .into_iter()
-        .filter(|&m| is_capture_move(board, m))
-        .collect();
-    filter_legal_moves(board, pseudo)
+pub fn legal_captures(board: &Board) -> MoveList {
+    let mut pseudo = generate_moves(board);
+    pseudo.retain(|m| is_capture_move(board, *m));
+    filter_with_pins(board, pseudo)
 }
 
 pub fn is_in_check(board: &Board, white: bool) -> bool {
@@ -200,8 +386,7 @@ fn update_castling_rights(board: &mut Board, moving_piece: Piece, from: u8, to: 
     }
 }
 
-fn generate_pawn_moves(board: &Board, white: bool) -> Vec<Move> {
-    let mut moves = Vec::new();
+fn generate_pawn_moves(board: &Board, white: bool, moves: &mut MoveList) {
     let pawns = board.pieces[if white { 0 } else { 6 }];
     let direction = if white { 8 } else { -8 };
     let start_rank = if white { 1 } else { 6 };
@@ -305,49 +490,33 @@ fn generate_pawn_moves(board: &Board, white: bool) -> Vec<Move> {
         }
         bb &= bb - 1;
     }
-    moves
 }
 
-fn generate_knight_moves(board: &Board, white: bool) -> Vec<Move> {
-    let mut moves = Vec::new();
+fn generate_knight_moves(board: &Board, white: bool, moves: &mut MoveList) {
     let knights = board.pieces[if white { 1 } else { 7 }];
-    let knight_deltas: [(i8, i8); 8] = [
-        (-2, -1),
-        (-2, 1),
-        (-1, -2),
-        (-1, 2),
-        (1, -2),
-        (1, 2),
-        (2, -1),
-        (2, 1),
-    ];
+    let own_pieces = if white {
+        board.pieces[0..6].iter().fold(0, |acc, &bb| acc | bb)
+    } else {
+        board.pieces[6..12].iter().fold(0, |acc, &bb| acc | bb)
+    };
     let mut bb = knights;
     while bb != 0 {
         let from = bb.trailing_zeros() as u8;
-        let from_rank = (from / 8) as i8;
-        let from_file = (from % 8) as i8;
-        for &(dr, df) in &knight_deltas {
-            let to_rank = from_rank + dr;
-            let to_file = from_file + df;
-            if to_rank >= 0 && to_rank < 8 && to_file >= 0 && to_file < 8 {
-                let to_u = (to_rank * 8 + to_file) as u8;
-                let target = board.square(to_u);
-                if target == Piece::Empty || target.is_white() != white {
-                    moves.push(Move {
-                        from,
-                        to: to_u,
-                        promotion: None,
-                    });
-                }
-            }
+        let mut attacks = KNIGHT_ATTACKS[from as usize] & !own_pieces;
+        while attacks != 0 {
+            let to = attacks.trailing_zeros() as u8;
+            moves.push(Move {
+                from,
+                to,
+                promotion: None,
+            });
+            attacks &= attacks - 1;
         }
         bb &= bb - 1;
     }
-    moves
 }
 
-fn generate_king_moves(board: &Board, white: bool) -> Vec<Move> {
-    let mut moves = Vec::new();
+fn generate_king_moves(board: &Board, white: bool, moves: &mut MoveList) {
     let kings = board.pieces[if white { 5 } else { 11 }];
     let own_pieces = if white {
         board.pieces[0..6].iter().fold(0, |acc, &bb| acc | bb)
@@ -358,34 +527,7 @@ fn generate_king_moves(board: &Board, white: bool) -> Vec<Move> {
     let mut bb = kings;
     while bb != 0 {
         let from = bb.trailing_zeros() as u8;
-        let from_rank = from / 8;
-        let from_file = from % 8;
-        let mut attacks = 0u64;
-        if from_rank > 0 {
-            attacks |= 1u64 << (from - 8);
-            if from_file > 0 {
-                attacks |= 1u64 << (from - 9);
-            }
-            if from_file < 7 {
-                attacks |= 1u64 << (from - 7);
-            }
-        }
-        if from_rank < 7 {
-            attacks |= 1u64 << (from + 8);
-            if from_file > 0 {
-                attacks |= 1u64 << (from + 7);
-            }
-            if from_file < 7 {
-                attacks |= 1u64 << (from + 9);
-            }
-        }
-        if from_file > 0 {
-            attacks |= 1u64 << (from - 1);
-        }
-        if from_file < 7 {
-            attacks |= 1u64 << (from + 1);
-        }
-        attacks &= !own_pieces;
+        let mut attacks = KING_ATTACKS[from as usize] & !own_pieces;
         while attacks != 0 {
             let to = attacks.trailing_zeros() as u8;
             moves.push(Move {
@@ -453,11 +595,9 @@ fn generate_king_moves(board: &Board, white: bool) -> Vec<Move> {
         }
         bb &= bb - 1;
     }
-    moves
 }
 
-fn generate_sliding_moves(board: &Board, white: bool, piece_idx: usize, directions: &[(i8, i8)]) -> Vec<Move> {
-    let mut moves = Vec::new();
+fn generate_sliding_moves(board: &Board, white: bool, piece_idx: usize, directions: &[(i8, i8)], moves: &mut MoveList) {
     let pieces = board.pieces[piece_idx];
     let own_pieces = if white {
         board.pieces[0..6].iter().fold(0, |acc, &bb| acc | bb)
@@ -493,22 +633,21 @@ fn generate_sliding_moves(board: &Board, white: bool, piece_idx: usize, directio
         }
         bb &= bb - 1;
     }
-    moves
 }
 
-fn generate_bishop_moves(board: &Board, white: bool) -> Vec<Move> {
+fn generate_bishop_moves(board: &Board, white: bool, moves: &mut MoveList) {
     let piece_idx = if white { 2 } else { 8 };
     let directions = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
-    generate_sliding_moves(board, white, piece_idx, &directions)
+    generate_sliding_moves(board, white, piece_idx, &directions, moves)
 }
 
-fn generate_rook_moves(board: &Board, white: bool) -> Vec<Move> {
+fn generate_rook_moves(board: &Board, white: bool, moves: &mut MoveList) {
     let piece_idx = if white { 3 } else { 9 };
     let directions = [(1, 0), (-1, 0), (0, 1), (0, -1)];
-    generate_sliding_moves(board, white, piece_idx, &directions)
+    generate_sliding_moves(board, white, piece_idx, &directions, moves)
 }
 
-fn generate_queen_moves(board: &Board, white: bool) -> Vec<Move> {
+fn generate_queen_moves(board: &Board, white: bool, moves: &mut MoveList) {
     let piece_idx = if white { 4 } else { 10 };
     let directions = [
         (1, 0),
@@ -520,110 +659,35 @@ fn generate_queen_moves(board: &Board, white: bool) -> Vec<Move> {
         (-1, 1),
         (-1, -1),
     ];
-    generate_sliding_moves(board, white, piece_idx, &directions)
+    generate_sliding_moves(board, white, piece_idx, &directions, moves)
 }
 
 fn is_square_attacked(board: &Board, sq: u8, by_white: bool) -> bool {
-    let sq_rank = (sq / 8) as i8;
-    let sq_file = (sq % 8) as i8;
+    let s = sq as usize;
+    let base = if by_white { 0 } else { 6 };
+
+    let pawn_table = if by_white { 1 } else { 0 };
+    if PAWN_ATTACKS[pawn_table][s] & board.pieces[base] != 0 {
+        return true;
+    }
+    if KNIGHT_ATTACKS[s] & board.pieces[base + 1] != 0 {
+        return true;
+    }
+    if KING_ATTACKS[s] & board.pieces[base + 5] != 0 {
+        return true;
+    }
+
+    let diag = board.pieces[base + 2] | board.pieces[base + 4];
+    let orth = board.pieces[base + 3] | board.pieces[base + 4];
+    if diag == 0 && orth == 0 {
+        return false;
+    }
     let all_pieces = board.pieces.iter().fold(0, |acc, &bb| acc | bb);
-
-    let pawn_dir = if by_white { -8 } else { 8 };
-    for &d in &[-1, 1] {
-        let from = (sq as i8 + pawn_dir + d) as i8;
-        if from >= 0 && from < 64 {
-            let from_file = (from % 8) as i8;
-            if (sq_file - from_file).abs() == 1 {
-                let piece = board.square(from as u8);
-                if piece == (if by_white { Piece::WPawn } else { Piece::BPawn }) {
-                    return true;
-                }
-            }
-        }
+    if diag != 0 && bishop_attacks(sq, all_pieces) & diag != 0 {
+        return true;
     }
-
-    let knight_deltas: [(i8, i8); 8] = [
-        (-2, -1),
-        (-2, 1),
-        (-1, -2),
-        (-1, 2),
-        (1, -2),
-        (1, 2),
-        (2, -1),
-        (2, 1),
-    ];
-    for &(dr, df) in &knight_deltas {
-        let from_rank = sq_rank + dr;
-        let from_file = sq_file + df;
-        if from_rank >= 0 && from_rank < 8 && from_file >= 0 && from_file < 8 {
-            let from = (from_rank * 8 + from_file) as u8;
-            let piece = board.square(from);
-            if piece == (if by_white { Piece::WKnight } else { Piece::BKnight }) {
-                return true;
-            }
-        }
-    }
-
-    let king_deltas: [(i8, i8); 8] = [
-        (-1, -1),
-        (-1, 0),
-        (-1, 1),
-        (0, -1),
-        (0, 1),
-        (1, -1),
-        (1, 0),
-        (1, 1),
-    ];
-    for &(dr, df) in &king_deltas {
-        let from_rank = sq_rank + dr;
-        let from_file = sq_file + df;
-        if from_rank >= 0 && from_rank < 8 && from_file >= 0 && from_file < 8 {
-            let from = (from_rank * 8 + from_file) as u8;
-            let piece = board.square(from);
-            if piece == (if by_white { Piece::WKing } else { Piece::BKing }) {
-                return true;
-            }
-        }
-    }
-
-    let bishop_directions = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
-    for &(dr, df) in &bishop_directions {
-        let mut r = sq_rank + dr;
-        let mut f = sq_file + df;
-        while r >= 0 && r < 8 && f >= 0 && f < 8 {
-            let from = (r * 8 + f) as u8;
-            if (all_pieces & (1u64 << from)) != 0 {
-                let piece = board.square(from);
-                if piece == (if by_white { Piece::WBishop } else { Piece::BBishop })
-                    || piece == (if by_white { Piece::WQueen } else { Piece::BQueen })
-                {
-                    return true;
-                }
-                break;
-            }
-            r += dr;
-            f += df;
-        }
-    }
-
-    let rook_directions = [(1, 0), (-1, 0), (0, 1), (0, -1)];
-    for &(dr, df) in &rook_directions {
-        let mut r = sq_rank + dr;
-        let mut f = sq_file + df;
-        while r >= 0 && r < 8 && f >= 0 && f < 8 {
-            let from = (r * 8 + f) as u8;
-            if (all_pieces & (1u64 << from)) != 0 {
-                let piece = board.square(from);
-                if piece == (if by_white { Piece::WRook } else { Piece::BRook })
-                    || piece == (if by_white { Piece::WQueen } else { Piece::BQueen })
-                {
-                    return true;
-                }
-                break;
-            }
-            r += dr;
-            f += df;
-        }
+    if orth != 0 && rook_attacks(sq, all_pieces) & orth != 0 {
+        return true;
     }
 
     false
@@ -769,6 +833,39 @@ mod perft_tests {
         }
     }
 
+    fn equiv_dfs(board: &Board, depth: u32) {
+        let fast = legal_moves(board);
+        let slow = filter_legal_moves(board, generate_moves(board));
+        assert_eq!(
+            fast, slow,
+            "legal_moves mismatch fen={}\nfast={:?}\nslow={:?}",
+            board.to_fen(), fast, slow
+        );
+        let fast_caps = legal_captures(board);
+        let slow_caps = filter_legal_moves(
+            board,
+            generate_moves(board).into_iter().filter(|&m| is_capture_move(board, m)).collect(),
+        );
+        assert_eq!(fast_caps, slow_caps, "legal_captures mismatch fen={}", board.to_fen());
+        if depth == 0 {
+            return;
+        }
+        for mv in slow {
+            let mut b = board.clone();
+            apply_move(&mut b, mv);
+            equiv_dfs(&b, depth - 1);
+        }
+    }
+
+    #[test]
+    fn legal_moves_pin_equivalence() {
+        equiv_dfs(&Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"), 4);
+        equiv_dfs(&Board::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"), 4);
+        equiv_dfs(&Board::from_fen("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1"), 5);
+        equiv_dfs(&Board::from_fen("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1"), 4);
+        equiv_dfs(&Board::from_fen("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8"), 4);
+    }
+
     #[test]
     fn zobrist_consistency() {
         zobrist_dfs(&Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"), 4);
@@ -820,5 +917,35 @@ mod perft_tests {
     #[test]
     fn perft_pos5() {
         check("rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 3, 62379);
+    }
+}
+
+#[cfg(test)]
+mod null_move_tests {
+    use super::*;
+    use crate::board::Board;
+
+    #[test]
+    fn null_move_clears_en_passant() {
+        let mut board = Board::from_fen("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1");
+        assert!(board.en_passant_file().is_some());
+        board.make_null_move();
+        assert!(board.en_passant_file().is_none());
+        assert!(board.is_white_to_move());
+        assert_eq!(board.position_hash(), board.compute_zobrist());
+    }
+
+    #[test]
+    fn no_phantom_ep_after_null() {
+        let mut board = Board::from_fen("4k3/8/8/3P4/8/8/8/4K3 b - e3 0 1");
+        board.make_null_move();
+        for m in legal_moves(&board) {
+            let mut child = board.clone();
+            apply_move(&mut child, m);
+            assert!(child.king_sq(true) < 64 && child.king_sq(false) < 64);
+        }
+        assert!(!legal_moves(&board)
+            .iter()
+            .any(|m| m.from == 35 && m.to == 44));
     }
 }

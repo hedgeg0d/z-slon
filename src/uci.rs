@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::board::Board;
 use crate::movegen::{apply_move, legal_moves, Move};
-use crate::search::{search_position, MATE_SCORE, MAX_PLY};
+use crate::search::{search_position, Tt, DEFAULT_TT_MB, MATE_SCORE, MAX_PLY};
 use crate::nnue::NnueEvaluator;
 use crate::polyglot_integration::OptimizedPolyglotBook;
 use tokio::sync::mpsc;
@@ -27,6 +27,7 @@ pub struct UciEngine {
     nnue: NnueEvaluator,
     book: Option<OptimizedPolyglotBook>,
     nnue_file: Option<String>,
+    tt: Arc<Tt>,
 }
 
 impl UciEngine {
@@ -49,6 +50,7 @@ impl UciEngine {
             nnue: NnueEvaluator::new(),
             book: None,
             nnue_file: None,
+            tt: Arc::new(Tt::new(DEFAULT_TT_MB)),
         }
     }
     
@@ -70,6 +72,7 @@ impl UciEngine {
             nnue,
             book: None,
             nnue_file: None,
+            tt: Arc::new(Tt::new(DEFAULT_TT_MB)),
         }
     }
     
@@ -144,7 +147,7 @@ impl UciEngine {
             "uci" => {
                 uci_println!("id name z-slon 0.7.2");
                 uci_println!("id author hedgegod");
-                uci_println!("option name Hash type spin default 16 min 1 max 33554432");
+                uci_println!("option name Hash type spin default 64 min 1 max 65536");
                 uci_println!("option name Threads type spin default 1 min 1 max 512");
                 uci_println!("option name UCI_Chess960 type check default false");
                 uci_println!("option name Ponder type check default false");
@@ -161,6 +164,7 @@ impl UciEngine {
             "ucinewgame" => {
                 self.board = Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
                 self.clear_position_history();
+                self.tt.clear();
             }
             "position" => {
                 self.handle_position(&parts[1..]);
@@ -473,9 +477,10 @@ impl UciEngine {
         let history = self.position_history.clone();
         let multi_pv = self.multi_pv.load(Ordering::Relaxed) as usize;
         
+        let tt_clone = Arc::clone(&self.tt);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let handle = tokio::task::spawn_blocking(move || {
-            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, multi_pv, |event| {
+            search_position(board_clone, depth, threads, history, cancel_clone, nnue_clone, multi_pv, tt_clone, |event| {
                 let _ = tx.send(event);
             })
         });
@@ -611,8 +616,14 @@ impl UciEngine {
                     }
                     "hash" => {
                         if let Ok(h) = value.parse::<u32>() {
-                            self.hash_size.store(h.clamp(1, 33554432), Ordering::SeqCst);
-                            uci_println!("info string Hash size set to {} MB", h.clamp(1, 33554432));
+                            let mb = h.clamp(1, 65536);
+                            if self.searching.load(Ordering::SeqCst) {
+                                uci_println!("info string Cannot resize hash during search");
+                            } else {
+                                self.hash_size.store(mb, Ordering::SeqCst);
+                                self.tt = Arc::new(Tt::new(mb as usize));
+                                uci_println!("info string Hash size set to {} MB", mb);
+                            }
                         }
                     }
                     "book" => {
@@ -649,9 +660,18 @@ impl UciEngine {
     }
     
     fn handle_evalfile_export(&mut self, path: &str) {
-        use crate::nnue::EMBEDDED_NNUE;
-        
-        match std::fs::write(path, EMBEDDED_NNUE) {
+        use crate::nnue::EMBEDDED_NNUE_PARTS;
+
+        let result = (|| -> std::io::Result<()> {
+            use std::io::Write;
+            let mut f = std::fs::File::create(path)?;
+            for part in EMBEDDED_NNUE_PARTS {
+                f.write_all(part)?;
+            }
+            Ok(())
+        })();
+
+        match result {
             Ok(_) => {
                 uci_println!("info string Exported embedded NNUE to: {}", path);
                 self.nnue_file = Some(path.to_string());
