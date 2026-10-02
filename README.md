@@ -28,6 +28,9 @@ A modern chess engine written in Rust featuring embedded NNUE evaluation, openin
 
 ## Building
 
+The engine depends on `nnue-rs 0.4.1` from crates.io for the incremental
+`update_changes` API. Local crate checkouts are not part of this repository.
+
 ```bash
 cargo build --release
 ```
@@ -40,6 +43,40 @@ The ultra-optimized binary will be at `./target/release/z-slon` (~94MB, includes
 - Single codegen unit for best performance
 - Stripped symbols for minimal size
 - Abort on panic for smaller binary
+
+## Benchmarking
+
+```bash
+./target/release/z-slon --bench        # depth 10 over 14 fixed positions
+./target/release/z-slon --bench 12     # deeper run
+```
+
+The benchmark is fully deterministic (single thread, fresh TT per position,
+no timers): `Nodes searched` must be **bit-identical** between binaries with
+identical search logic. This makes it a regression gate:
+
+- **performance-only patches** (movegen, magics, make/unmake): nodes must not
+  change, `Nodes/second` shows the speedup
+- **search patches**: nodes will change — that is expected; compare strength
+  with SPRT instead
+
+## Strength Testing (SPRT)
+
+Strength matches can use an external UCI runner such as
+[fastchess](https://github.com/Disservin/fastchess). Match runners, opening
+suites, downloads and tournament outputs are not bundled with the engine.
+
+Methodology:
+
+- **both binaries must use the same NNUE** (both with the embedded network) —
+  otherwise the test measures "patch + net" together
+- one change per test, never two patches in one binary
+- STC fast triage first, LTC confirmation only for promising search patches
+- Compare time managers using the same binary with the UCI option
+  `Time Management` set to `adaptive` and `linear`, respectively.
+- Time-manager tests need both increment and no-increment controls, e.g.
+  triage at `20+0.2`, confirmation at `60+0.6` and `300+0`. Also check time
+  forfeits/latency and multiple thread counts; a short smoke match proves no Elo gain.
 
 ## Usage
 
@@ -61,6 +98,7 @@ Options:
     --book <path>        Load Polyglot opening book
     --threads <n>        Set number of search threads (default: 1)
     --debug              Enable debug output
+    --bench [depth]      Run deterministic benchmark and exit (default depth: 10)
 ```
 
 ### Interactive CLI Mode
@@ -133,10 +171,31 @@ The engine runs in UCI mode by default and supports standard UCI commands.
 - **Ponder** (check): Pondering support - think during opponent's time (default: false)
 - **MultiPV** (1-500): Multiple principal variations (default: 1)
 - **UCI_Chess960** (check): Chess960 mode (not yet implemented)
-- **Move Overhead** (0-5000 ms): Time management overhead (not yet implemented)
+- **Move Overhead** (0-5000 ms): Clock reserve for scheduling, I/O and GUI latency (default: 30 ms)
+- **Time Management** (`linear` / `adaptive`): Defaults to `adaptive`: existing
+  linear allocation, soft stop after a completed iteration, hard limit up to
+  three times that allocation (still clock-capped). No phase or instability
+  heuristics yet. `linear` retains the previous hard-stop policy for A/B tests
+  and rollback. Adoption is based on a positive preliminary self-play result,
+  not a completed SPRT pass; longer and no-increment confirmation remain needed.
 - **nodestime** (0-10000): Nodes per second (not yet implemented)
 
 #### UCI Commands
+
+Clock budgets use the side-to-move clock and honor `movestogo`. `movetime`
+is a fixed hard limit, independent of the Time Management mode; `infinite`
+has no clock budget. An explicit `depth` remains a depth cap even with clocks.
+Pondering has no active deadline until `ponderhit`; the full budget starts at
+that hit, not at the beginning of pondering. Search-local cancellation prevents
+an old timer from stopping a later search. Set Move Overhead for your device:
+wall-clock deadlines cannot eliminate OS scheduling delays.
+
+Build and run the engine's built-in unit tests:
+
+```bash
+timeout 300 cargo build --release
+timeout 180 cargo test --release
+```
 
 ```bash
 # Set options
@@ -285,52 +344,19 @@ perf report
 
 ## Dependencies
 
-- **[timecat](https://crates.io/crates/timecat)**: NNUE evaluation support
+- **[nnue-rs](https://crates.io/crates/nnue-rs)**: NNUE loading, evaluation and incremental accumulator updates
 - **[polyglot-book-rs](https://crates.io/crates/polyglot-book-rs)**: Polyglot opening book support  
 - **[tokio](https://crates.io/crates/tokio)**: Async runtime for responsive concurrent operations
 - **[rustyline](https://crates.io/crates/rustyline)**: Interactive CLI with readline support
 - **[clap](https://crates.io/crates/clap)**: Command-line argument parsing
 - **[lazy_static](https://crates.io/crates/lazy_static)**: Static initialization for FFI bindings
 
-## Lichess Bot Launcher
+## Lichess Integration
 
-`start_lichess_bot.sh` is an interactive TUI launcher for running z-slon on
-Lichess via [lichess-bot](https://github.com/lichess-bot-devs/lichess-bot).
-
-```
-./start_lichess_bot.sh
-```
-
-It opens an `fzf`-driven menu where you configure the run before starting:
-
-- **Mode** — `matchmaking` (actively challenges other bots) or `passive`
-  (only accepts incoming challenges)
-- **Threads** — engine search threads
-- **Pondering** — think on the opponent's clock (uses ponderchain)
-- **Game type** — rated or casual (matchmaking)
-- **Rating range** — opponent rating spread to seek (matchmaking)
-- **Time controls** — one or more time controls to offer (matchmaking)
-
-Choosing **START** writes the selected options into `config_zslon_active.yml`
-(derived from `config_turbo.yml`) and launches the bot. If `fzf` is not
-installed it falls back to a plain text prompt.
-
-### Token setup
-
-The Lichess API token is never stored in the repository or in the YAML configs
-(they hold the placeholder `set_via_env`). Provide it in one of two ways:
-
-- put it in `.lichess_token` next to the script (git-ignored), or
-- export `LICHESS_BOT_TOKEN` in your environment.
-
-```
-echo "lip_yourTokenHere" > .lichess_token
-chmod 600 .lichess_token
-```
-
-Requirements: a working `lichess-bot` checkout (default `~/lichess-bot`,
-override with `ZSLON_BOT_DIR`) including its `venv`, plus optional `fzf` for
-the TUI.
+Run the engine as an ordinary UCI executable from an external
+[lichess-bot](https://github.com/lichess-bot-devs/lichess-bot) installation.
+Launchers, bot configurations and API tokens are managed outside this
+repository; none are required to build or run the engine locally.
 
 ## License
 

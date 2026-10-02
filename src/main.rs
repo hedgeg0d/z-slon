@@ -6,6 +6,7 @@ mod board;
 mod eval;
 mod movegen;
 mod search;
+mod time_management;
 mod uci;
 mod nnue;
 mod polyglot_integration;
