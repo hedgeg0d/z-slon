@@ -271,7 +271,7 @@ pub fn is_capture_move(board: &Board, m: Move) -> bool {
     if matches!(piece, Piece::WPawn | Piece::BPawn) {
         let diff = (m.from as i8 - m.to as i8).abs();
         if diff == 7 || diff == 9 {
-            return board.en_passant.is_some();
+            return board.en_passant_square() == Some(m.to);
         }
     }
     false
@@ -947,5 +947,29 @@ mod null_move_tests {
         assert!(!legal_moves(&board)
             .iter()
             .any(|m| m.from == 35 && m.to == 44));
+    }
+}
+
+#[cfg(test)]
+mod ep_capture_tests {
+    use super::*;
+    use crate::board::Board;
+
+    #[test]
+    fn capture_detection_targets_ep_square() {
+        // black double pushed d7-d5 (ep square d6); white pawns e5 and g5
+        let board = Board::from_fen("4k3/8/8/3pP2P/8/8/8/4K3 w - d6 0 3");
+        // e5xd6 e.p. is a capture
+        assert!(is_capture_move(&board, Move { from: 36, to: 43, promotion: None }));
+        // e5xd5 is a normal capture
+        assert!(is_capture_move(&board, Move { from: 36, to: 35, promotion: None }));
+        // g5->f6 is quiet: the ep file is d, not f
+        assert!(!is_capture_move(&board, Move { from: 38, to: 45, promotion: None }));
+    }
+
+    #[test]
+    fn capture_detection_without_ep() {
+        let board = Board::from_fen("4k3/8/8/3pP2P/8/8/8/4K3 w - - 0 3");
+        assert!(!is_capture_move(&board, Move { from: 36, to: 43, promotion: None }));
     }
 }

@@ -1438,7 +1438,7 @@ fn is_capture(board: &Board, mv: Move) -> bool {
     if matches!(piece, Piece::WPawn | Piece::BPawn) {
         let diff = (mv.from as i8 - mv.to as i8).abs();
         if diff == 7 || diff == 9 {
-            return board.en_passant.is_some();
+            return board.en_passant_square() == Some(mv.to);
         }
     }
     false

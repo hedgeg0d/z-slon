@@ -202,7 +202,9 @@ impl Board {
         }
         h ^= ZOBRIST.castle[(self.castling & 15) as usize];
         if let Some(f) = self.en_passant {
-            h ^= ZOBRIST.ep[(f & 7) as usize];
+            if self.ep_capture_possible() {
+                h ^= ZOBRIST.ep[(f & 7) as usize];
+            }
         }
         if self.white_to_move {
             h ^= ZOBRIST.side;
@@ -250,7 +252,9 @@ impl Board {
     pub(crate) fn xor_castle_ep_zobrist(&mut self) {
         self.zobrist ^= ZOBRIST.castle[(self.castling & 15) as usize];
         if let Some(f) = self.en_passant {
-            self.zobrist ^= ZOBRIST.ep[(f & 7) as usize];
+            if self.ep_capture_possible() {
+                self.zobrist ^= ZOBRIST.ep[(f & 7) as usize];
+            }
         }
     }
 
@@ -270,6 +274,36 @@ impl Board {
 
     pub fn en_passant_file(&self) -> Option<u8> {
         self.en_passant
+    }
+
+    /// Target square of a possible en passant capture (depends on side to move).
+    pub(crate) fn en_passant_square(&self) -> Option<u8> {
+        let file = self.en_passant?;
+        let rank = if self.white_to_move { 5u8 } else { 2u8 };
+        Some(rank * 8 + (file & 7))
+    }
+
+    /// True if the side to move has a pawn able to capture en passant
+    /// (pseudo-legal: pins ignored). The ep square belongs to the position
+    /// identity (zobrist) only while such a capture exists — two positions
+    /// with dead ep rights must hash equal.
+    fn ep_capture_possible(&self) -> bool {
+        let file = match self.en_passant {
+            Some(f) => (f & 7) as i32,
+            None => return false,
+        };
+        let (cap_rank, pawns) = if self.white_to_move {
+            (4i32, self.pieces[0])
+        } else {
+            (3i32, self.pieces[6])
+        };
+        for df in [-1i32, 1] {
+            let f = file + df;
+            if (0..8).contains(&f) && pawns & (1u64 << (cap_rank * 8 + f)) != 0 {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn castling_rights(&self) -> u8 {
@@ -406,5 +440,48 @@ impl fmt::Display for Board {
             writeln!(f)?;
         }
         writeln!(f, "  a b c d e f g h")
+    }
+}
+
+#[cfg(test)]
+mod ep_zobrist_tests {
+    use super::*;
+
+    #[test]
+    fn ep_hash_ignored_without_capturer() {
+        // white double pushed e2-e4 (ep e3) but black has no pawn able to take
+        let without = Board::from_fen("4k3/8/8/8/4P3/8/8/4K3 b - - 0 2");
+        let with_ep = Board::from_fen("4k3/8/8/8/4P3/8/8/4K3 b - e3 0 2");
+        assert_eq!(without.position_hash(), with_ep.position_hash());
+    }
+
+    #[test]
+    fn ep_hash_used_with_capturer() {
+        // same, but black pawn d4 can take e3 e.p.
+        let without = Board::from_fen("4k3/8/8/8/3pP3/8/8/4K3 b - - 0 2");
+        let with_ep = Board::from_fen("4k3/8/8/8/3pP3/8/8/4K3 b - e3 0 2");
+        assert_ne!(without.position_hash(), with_ep.position_hash());
+    }
+
+    #[test]
+    fn ep_hash_black_double_push() {
+        // black double pushed d7-d5 (ep d6); white pawn e5 can take
+        let without = Board::from_fen("4k3/8/8/3pP3/8/8/8/4K3 w - - 0 3");
+        let with_ep = Board::from_fen("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 3");
+        assert_ne!(without.position_hash(), with_ep.position_hash());
+        // ... and without a white pawn no capture exists
+        let without2 = Board::from_fen("4k3/8/8/3p4/8/8/8/4K3 w - - 0 3");
+        let with_ep2 = Board::from_fen("4k3/8/8/3p4/8/8/8/4K3 w - d6 0 3");
+        assert_eq!(without2.position_hash(), with_ep2.position_hash());
+    }
+
+    #[test]
+    fn en_passant_square_mapping() {
+        let b = Board::from_fen("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 3");
+        assert_eq!(b.en_passant_square(), Some(5 * 8 + 3));
+        let b = Board::from_fen("4k3/8/8/8/3pP3/8/8/4K3 b - e3 0 2");
+        assert_eq!(b.en_passant_square(), Some(2 * 8 + 4));
+        let b = Board::from_fen("4k3/8/8/3pP3/8/8/8/4K3 w - - 0 3");
+        assert_eq!(b.en_passant_square(), None);
     }
 }
