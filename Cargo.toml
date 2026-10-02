@@ -14,11 +14,16 @@ codegen-units = 1
 strip = true
 panic = "abort"
 
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 rustyline = "14"
 clap = { version = "4", features = ["derive"] }
-nnue-rs = "0.4.0"
+nnue-rs = "0.4.1"
 arrayvec = "0.7"
 polyglot-book-rs = "0.1.0"
 lazy_static = "1.5"

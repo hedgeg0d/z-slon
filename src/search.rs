@@ -235,13 +235,14 @@ impl AccStack {
         }
     }
 
-    fn descend(&mut self, nnue: &Option<NnueEvaluator>, ply: usize, parent: &Board, child: &Board) {
+    fn descend(&mut self, nnue: &Option<NnueEvaluator>, ply: usize, parent: &Board, child: &Board, mv: Move) {
         if !self.enabled || ply + 1 >= self.stack.len() {
             return;
         }
+        let (removed, added) = crate::nnue::move_changes(parent, mv);
         let (lo, hi) = self.stack.split_at_mut(ply + 1);
         if let Some(ev) = nnue {
-            ev.update(parent, child, &lo[ply], &mut hi[0]);
+            ev.update_changes(parent, child, &removed, &added, &lo[ply], &mut hi[0]);
         }
     }
 
@@ -857,7 +858,7 @@ fn search_root(
         let child_depth = depth - 1 + extension;
 
         position_history.push(next_hash);
-        tables.acc_stack.descend(nnue, 0, board, &next);
+        tables.acc_stack.descend(nnue, 0, board, &next, mv);
         tables.set_move_stack(0, Some((board.square(mv.from) as usize, mv.to as usize)));
 
         let score = if i == 0 {
@@ -1067,7 +1068,7 @@ fn pvs(
             reduction = reduction.min(child_depth.saturating_sub(1));
         }
 
-        tables.acc_stack.descend(nnue, ply as usize, board, &next);
+        tables.acc_stack.descend(nnue, ply as usize, board, &next, mv);
         tables.set_move_stack(ply as usize, Some((moved_piece, mv.to as usize)));
 
         let score = if i == 0 {
@@ -1230,7 +1231,7 @@ fn quiescence(
         apply_move(&mut next, mv);
 
         position_history.push(next.position_hash());
-        tables.acc_stack.descend(nnue, ply as usize, board, &next);
+        tables.acc_stack.descend(nnue, ply as usize, board, &next, mv);
 
         let score = -quiescence(&next, -beta, -alpha, nodes, ply + 1, tt, cancel_flag, nnue, position_history, tables);
 

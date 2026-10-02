@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use arrayvec::ArrayVec;
 use nnue_rs::{Accumulator, Color as NnColor, Network, Piece as NnPiece, PieceKind};
 
-use crate::board::Board;
+use crate::board::{Board, Piece};
+use crate::movegen::Move;
 
 pub const EMBEDDED_NNUE_PARTS: [&[u8]; 1] = [include_bytes!("../main_sf17.nnue")];
 
@@ -131,6 +133,23 @@ impl NnueEvaluator {
         }
     }
 
+    pub fn update_changes(
+        &self,
+        parent_board: &Board,
+        child_board: &Board,
+        removed: &[(u8, NnPiece)],
+        added: &[(u8, NnPiece)],
+        parent: &Accumulator,
+        child: &mut Accumulator,
+    ) {
+        if !Self::kings_present(child_board) {
+            return;
+        }
+        if let Some(n) = &self.network {
+            n.update_changes(parent_board, child_board, removed, added, parent, child);
+        }
+    }
+
     pub fn eval_acc(&self, acc: &Accumulator, board: &Board) -> Option<i32> {
         let network = self.network.as_ref()?;
         if board.king_sq(true) >= 64 || board.king_sq(false) >= 64 {
@@ -148,6 +167,52 @@ impl NnueEvaluator {
     pub fn clone_handle(&self) -> Self {
         self.clone()
     }
+}
+
+/// Piece changes caused by `mv` in `board` (the position BEFORE the move),
+/// in the `(square, piece)` form [`NnueEvaluator::update_changes`] expects.
+/// Derived from the move alone — no board scans. Shapes match what the
+/// board-diffing `Network::update` produces: `removed` carries
+/// `(square, piece_before)` and `added` `(square, piece_after)`.
+pub fn move_changes(
+    board: &Board,
+    mv: Move,
+) -> (ArrayVec<(u8, NnPiece), 4>, ArrayVec<(u8, NnPiece), 4>) {
+    let mut removed = ArrayVec::new();
+    let mut added = ArrayVec::new();
+
+    let moved = board.square(mv.from);
+    removed.push((mv.from, piece_for_index(moved as usize)));
+    added.push((mv.to, piece_for_index(mv.promotion.unwrap_or(moved) as usize)));
+
+    let target = board.square(mv.to);
+    if target != Piece::Empty {
+        removed.push((mv.to, piece_for_index(target as usize)));
+    } else if matches!(moved, Piece::WPawn | Piece::BPawn) {
+        let diff = (mv.from as i8 - mv.to as i8).abs();
+        if diff == 7 || diff == 9 {
+            // en passant: the captured pawn sits behind the target square
+            let dir = if moved.is_white() { -8 } else { 8 };
+            let victim = if moved.is_white() { Piece::BPawn } else { Piece::WPawn };
+            removed.push(((mv.to as i8 + dir) as u8, piece_for_index(victim as usize)));
+        }
+    }
+
+    // castling: the rook moves along with the king
+    if matches!(moved, Piece::WKing | Piece::BKing) && (mv.from as i8 - mv.to as i8).abs() == 2 {
+        let (rook_from, rook_to) = match mv.to {
+            6 => (7, 5),
+            2 => (0, 3),
+            62 => (63, 61),
+            58 => (56, 59),
+            _ => unreachable!("Invalid castling move destination"),
+        };
+        let rook = board.square(rook_from);
+        removed.push((rook_from, piece_for_index(rook as usize)));
+        added.push((rook_to, piece_for_index(rook as usize)));
+    }
+
+    (removed, added)
 }
 
 #[cfg(test)]
@@ -170,13 +235,28 @@ mod incremental_tests {
 
         let mut child = parent.clone();
         apply_move(&mut child, Move { from: sq(from), to: sq(to), promotion: promo });
+        let mv = Move { from: sq(from), to: sq(to), promotion: promo };
 
+        // search path: O(1) move-derived changes
         let mut child_acc = ev.new_accumulator().unwrap();
-        ev.update(&parent, &child, &parent_acc, &mut child_acc);
+        let (removed, added) = move_changes(&parent, mv);
+        ev.update_changes(&parent, &child, &removed, &added, &parent_acc, &mut child_acc);
 
         let incremental = ev.eval_acc(&child_acc, &child).unwrap();
         let full = ev.evaluate(&child).unwrap();
         assert_eq!(incremental, full, "fen={} {}{}", parent_fen, from, to);
+
+        // board-diffing path must agree
+        let mut diff_acc = ev.new_accumulator().unwrap();
+        ev.update(&parent, &child, &parent_acc, &mut diff_acc);
+        assert_eq!(
+            ev.eval_acc(&diff_acc, &child).unwrap(),
+            full,
+            "board-diff path diverged fen={} {}{}",
+            parent_fen,
+            from,
+            to
+        );
     }
 
     #[test]
@@ -250,10 +330,12 @@ mod incremental_tests {
         let mut acc = ev.new_accumulator().unwrap();
         ev.refresh(&board, &mut acc);
         for (from, to, promo) in moves {
+            let mv = Move { from: sq(from), to: sq(to), promotion: promo };
             let mut child = board.clone();
-            apply_move(&mut child, Move { from: sq(from), to: sq(to), promotion: promo });
+            apply_move(&mut child, mv);
             let mut child_acc = ev.new_accumulator().unwrap();
-            ev.update(&board, &child, &acc, &mut child_acc);
+            let (removed, added) = move_changes(&board, mv);
+            ev.update_changes(&board, &child, &removed, &added, &acc, &mut child_acc);
             let incremental = ev.eval_acc(&child_acc, &child).unwrap();
             let full = ev.evaluate(&child).unwrap();
             assert_eq!(incremental, full, "diverged after {}{}", from, to);
