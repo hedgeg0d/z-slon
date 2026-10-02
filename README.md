@@ -7,11 +7,22 @@ A modern chess engine written in Rust featuring embedded NNUE evaluation, openin
 - Correct root TT bounds for aspiration-window fail-high/fail-low results.
 - Avoid unrestricted root bounds from restricted MultiPV searches and
   incomplete bounds from interrupted searches; fix quiescence stand-pat bounds.
-- Keep move-derived incremental NNUE updates via `nnue-rs 0.4.1`. Lazy-update
-  experiments were not retained because paired benchmarks showed no reliable gain.
-- Validation: 51 unit tests and UCI lifecycle checks passed. A bounded `8+0.08`
-  match scored 9 wins, 7 losses and 12 draws, without an SPRT verdict. This does
-  not establish an Elo gain or exclude a strength regression.
+- Keep move-derived incremental NNUE updates via `nnue-rs 0.4.2`, with fused
+  updates and packed AVX2 FC0 inference. Public crate APIs and network formats
+  remain compatible with 0.4.1. Paired depth-10 engine benches showed a median
+  NPS gain of about 13% against 0.4.1 on the tested machine, with identical
+  nodes, scores and best moves; other hardware and Elo gains are not established.
+  Lazy-update experiments were not retained because paired benchmarks showed
+  no reliable gain.
+- TT-only validation: 51 unit tests and UCI lifecycle checks passed. A `8+0.08`
+  match against the pre-TT baseline finished at 200 games: 51 wins, 39 losses
+  and 110 draws; +20.87 +/-29.97 Elo, LLR +0.39 with boundaries +/-2.94.
+  There is no SPRT verdict. That match used nnue-rs 0.4.1 on both sides and
+  does not validate the new backend's playing strength.
+- Final release validation with published nnue-rs 0.4.2: 51 unit tests,
+  UCI lifecycle checks with 1/2 threads and linear/adaptive TM, and 12
+  fixed-depth PV/MultiPV comparisons passed. The generic Linux binary's
+  depth-10 bench matches the 0.4.1 baseline at 1,271,806 nodes.
 
 ## Features
 
@@ -39,8 +50,8 @@ A modern chess engine written in Rust featuring embedded NNUE evaluation, openin
 
 ## Building
 
-The engine depends on `nnue-rs 0.4.1` from crates.io for the incremental
-`update_changes` API. Local crate checkouts are not part of this repository.
+The engine depends on `nnue-rs 0.4.2` from crates.io for incremental updates
+and optimized inference. Local crate checkouts are not part of this repository.
 
 ```bash
 cargo build --release
@@ -53,6 +64,12 @@ for distribution within the same architecture:
 ```bash
 RUSTFLAGS="" cargo build --release
 ```
+
+The [0.8.0 release](https://github.com/hedgeg0d/z-slon/releases/tag/v0.8.0)
+provides a generic Linux x86-64 binary: AVX2 is selected at runtime, not required.
+It requires glibc 2.34 or newer and `libgcc_s.so.1`. Other architectures or older
+Linux environments should build from source. The release includes the exact
+build lockfile and third-party license notices.
 
 The ultra-optimized binary will be at `./target/release/z-slon` (~94MB, includes 72MB embedded NNUE)
 
@@ -376,7 +393,13 @@ repository; none are required to build or run the engine locally.
 
 ## License
 
-MIT License - See LICENSE file for details
+Engine source: [MIT License](LICENSE).
+
+The embedded `main_sf17.nnue` is the Stockfish network
+[`nn-1c0000000000.nnue`](https://github.com/official-stockfish/networks/blob/master/nn-1c0000000000.nnue),
+distributed by its authors under [CC0](https://github.com/official-stockfish/networks/blob/master/LICENSE).
+Its SHA-256 is `1c0000000000a67d629999d932d0c373f7450ce43cd12d0562868f4eaf9ae2ad`.
+The network's license is separate from the engine source license.
 
 ## Author
 
