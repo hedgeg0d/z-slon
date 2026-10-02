@@ -26,6 +26,7 @@ use clap::Parser;
 
 #[derive(Parser, Debug)]
 #[command(name = "z-slon")]
+#[command(version)]
 #[command(about = "A chess engine with NNUE support", long_about = None)]
 struct Args {
     #[arg(long)]

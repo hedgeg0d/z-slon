@@ -2,6 +2,17 @@
 
 A modern chess engine written in Rust featuring embedded NNUE evaluation, opening books, and advanced search techniques.
 
+## 0.8.0
+
+- Correct root TT bounds for aspiration-window fail-high/fail-low results.
+- Avoid unrestricted root bounds from restricted MultiPV searches and
+  incomplete bounds from interrupted searches; fix quiescence stand-pat bounds.
+- Keep move-derived incremental NNUE updates via `nnue-rs 0.4.1`. Lazy-update
+  experiments were not retained because paired benchmarks showed no reliable gain.
+- Validation: 51 unit tests and UCI lifecycle checks passed. A bounded `8+0.08`
+  match scored 9 wins, 7 losses and 12 draws, without an SPRT verdict. This does
+  not establish an Elo gain or exclude a strength regression.
+
 ## Features
 
 ### Core Engine
@@ -33,6 +44,14 @@ The engine depends on `nnue-rs 0.4.1` from crates.io for the incremental
 
 ```bash
 cargo build --release
+```
+
+The default build uses `target-cpu=native`; its CPU instruction requirements
+match the build machine. Build on each target device, or use a generic build
+for distribution within the same architecture:
+
+```bash
+RUSTFLAGS="" cargo build --release
 ```
 
 The ultra-optimized binary will be at `./target/release/z-slon` (~94MB, includes 72MB embedded NNUE)
@@ -94,11 +113,12 @@ The engine starts in UCI mode automatically. Simply launch it from your chess GU
 
 Options:
     --cli                Enable interactive CLI mode
-    --nnue <path>        Load external NNUE file (overrides embedded)
+    --nnue <path>        Legacy option; currently leaves embedded NNUE unchanged
     --book <path>        Load Polyglot opening book
     --threads <n>        Set number of search threads (default: 1)
     --debug              Enable debug output
     --bench [depth]      Run deterministic benchmark and exit (default depth: 10)
+    --version            Print version and exit
 ```
 
 ### Interactive CLI Mode
@@ -166,7 +186,7 @@ The engine runs in UCI mode by default and supports standard UCI commands.
 
 - **Hash** (1-33554432 MB): Transposition table size (default: 16)
 - **Threads** (1-512): Number of search threads (default: 1)
-- **EvalFile** (string): NNUE file path or `<embedded>` (default: `<embedded>`)
+- **EvalFile** (string): Export destination for embedded NNUE, or `<embedded>` (default: `<embedded>`). Does not load external networks.
 - **Book** (string): Path to Polyglot opening book file
 - **Ponder** (check): Pondering support - think during opponent's time (default: false)
 - **MultiPV** (1-500): Multiple principal variations (default: 1)
@@ -206,9 +226,6 @@ setoption name Book value /path/to/book.bin
 # Export embedded NNUE (like Stockfish)
 setoption name EvalFile value /tmp/exported.nnue
 
-# Load external NNUE
-setoption name EvalFile value /path/to/custom.nnue
-
 # Quick test
 echo -e "uci\nposition startpos\ngo depth 5\nquit" | ./target/release/z-slon
 
@@ -247,16 +264,14 @@ z-slon has **main_sf17.nnue (72MB) embedded directly in the binary** and uses it
 echo "setoption name EvalFile value /tmp/my.nnue" | ./target/release/z-slon
 ```
 
-**Load a different NNUE:**
-```bash
-# Via command line
-./target/release/z-slon --nnue /path/to/custom.nnue
+**Warning:** `EvalFile` writes the embedded network to the specified path and
+overwrites an existing file. It is an export operation, not a loader.
+External-network loading is not implemented; the legacy `--nnue` option does
+not replace the embedded network.
 
-# Via UCI option
-setoption name EvalFile value /path/to/custom.nnue
-```
-
-The engine uses NNUE evaluation via the [timecat](https://crates.io/crates/timecat) crate. If NNUE loading fails, it falls back to hand-crafted evaluation (HCE).
+The engine uses [nnue-rs](https://crates.io/crates/nnue-rs) for incremental
+evaluation. If the embedded network cannot be parsed, it falls back to
+hand-crafted evaluation (HCE).
 
 ## Opening Books
 
@@ -281,7 +296,8 @@ The engine automatically plays book moves when available, preferring higher-weig
 - Stripped symbols (`strip = true`)
 - Abort on panic (`panic = "abort"`)
 
-**Typical performance:** 100K-200K nodes/second (single thread) with NNUE evaluation
+Performance depends on hardware and position. Use `--bench` to measure your
+device; NPS is not an Elo measurement.
 
 **Responsive during search:** The engine can receive and process commands (like `stop`) even during `go infinite`
 

@@ -157,7 +157,7 @@ impl UciEngine {
 
         match parts[0] {
             "uci" => {
-                uci_println!("id name z-slon 0.7.2");
+                uci_println!("id name z-slon {}", env!("CARGO_PKG_VERSION"));
                 uci_println!("id author hedgegod");
                 uci_println!("option name Hash type spin default 64 min 1 max 65536");
                 uci_println!("option name Threads type spin default 1 min 1 max 512");
