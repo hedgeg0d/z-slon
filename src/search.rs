@@ -797,6 +797,7 @@ fn search_root(
     excluded_moves: &[Move],
 ) -> (Option<Move>, i32, [Option<Move>; 32]) {
     let mut moves = legal_moves(board);
+    let orig_alpha = alpha;
     if moves.is_empty() {
         return (None, terminal_score(board, 0), [None; 32]);
     }
@@ -894,8 +895,19 @@ fn search_root(
         }
     }
 
-    if let Some(mv) = best_move {
-        store_tt(tt, board.position_hash(), depth, best_score, TTFlag::Exact, Some(mv), 0);
+    // Restricted MultiPV and interrupted searches cannot provide a completed
+    // bound for the unrestricted position.
+    if excluded_moves.is_empty() && !cancel_flag.load(Ordering::Relaxed) {
+        if let Some(mv) = best_move {
+            let flag = if best_score >= beta {
+                TTFlag::Lower
+            } else if best_score <= orig_alpha {
+                TTFlag::Upper
+            } else {
+                TTFlag::Exact
+            };
+            store_tt(tt, hash, depth, best_score, flag, Some(mv), 0);
+        }
     }
 
     (best_move, best_score, best_pv)
@@ -1132,7 +1144,9 @@ fn pvs(
         }
     }
 
-    store_tt(tt, hash, depth, best_score, flag, best_move, ply);
+    if !cancel_flag.load(Ordering::Relaxed) {
+        store_tt(tt, hash, depth, best_score, flag, best_move, ply);
+    }
     best_score
 }
 
@@ -1152,6 +1166,7 @@ fn quiescence(
         return 0;
     }
 
+    let orig_alpha = alpha;
     nodes.fetch_add(1, Ordering::Relaxed);
 
     let hash = board.position_hash();
@@ -1207,7 +1222,6 @@ fn quiescence(
         -(victim_val * 10 - attacker_val)
     });
 
-    let orig_alpha = alpha;
     let mut best_move = None;
 
     for &mv in &moves {
@@ -1237,6 +1251,10 @@ fn quiescence(
 
         position_history.pop();
 
+        if cancel_flag.load(Ordering::Relaxed) {
+            return alpha;
+        }
+
         if score >= beta {
             store_tt(tt, hash, 0, beta, TTFlag::Lower, Some(mv), ply);
             return beta;
@@ -1253,7 +1271,9 @@ fn quiescence(
     } else {
         TTFlag::Upper
     };
-    store_tt(tt, hash, 0, alpha, flag, best_move, ply);
+    if !cancel_flag.load(Ordering::Relaxed) {
+        store_tt(tt, hash, 0, alpha, flag, best_move, ply);
+    }
 
     alpha
 }
@@ -1500,4 +1520,87 @@ fn count_repetitions(hist: &[u64], hash: u64, halfmove: u8) -> usize {
         .take(halfmove as usize + 1)
         .filter(|&&h| h == hash)
         .count()
+}
+
+#[cfg(test)]
+mod tt_tests {
+    use super::*;
+
+    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    fn root_window(alpha: i32, beta: i32, excluded: &[Move]) -> (Arc<Tt>, i32) {
+        let board = Board::from_fen(START);
+        let tt = Arc::new(Tt::new(1));
+        let mut tables = SearchTables::new(&None);
+        let (_, score, _) = search_root(
+            &board, 1, alpha, beta, 0, &Arc::new(AtomicU64::new(0)), &tt,
+            &mut vec![board.position_hash()], &Arc::new(AtomicBool::new(false)),
+            &None, &mut tables, excluded,
+        );
+        (tt, score)
+    }
+
+    #[test]
+    fn root_fail_high_is_lower_bound() {
+        let (tt, score) = root_window(-20_000, -10_000, &[]);
+        let hash = Board::from_fen(START).position_hash();
+        assert!(score >= -10_000);
+        assert_eq!(tt.probe(hash).unwrap().flag, TTFlag::Lower);
+        assert!(probe_tt_cutoff(&tt, hash, 1, -20_000, -10_000, 0).is_some());
+        assert!(probe_tt_cutoff(&tt, hash, 1, score - 1, score + 1, 0).is_none());
+    }
+
+    #[test]
+    fn root_fail_low_is_upper_bound() {
+        let (tt, score) = root_window(10_000, 20_000, &[]);
+        let hash = Board::from_fen(START).position_hash();
+        assert!(score <= 10_000);
+        assert_eq!(tt.probe(hash).unwrap().flag, TTFlag::Upper);
+        assert!(probe_tt_cutoff(&tt, hash, 1, 10_000, 20_000, 0).is_some());
+        assert!(probe_tt_cutoff(&tt, hash, 1, score - 1, score + 1, 0).is_none());
+    }
+
+    #[test]
+    fn root_inside_window_is_exact() {
+        let (tt, score) = root_window(-10_000, 10_000, &[]);
+        let hash = Board::from_fen(START).position_hash();
+        assert!((-10_000..10_000).contains(&score));
+        assert_eq!(tt.probe(hash).unwrap().flag, TTFlag::Exact);
+    }
+
+    #[test]
+    fn restricted_root_does_not_store_unrestricted_bound() {
+        let board = Board::from_fen(START);
+        let excluded = [legal_moves(&board)[0]];
+        let (tt, _) = root_window(-10_000, 10_000, &excluded);
+        assert!(tt.probe(board.position_hash()).is_none());
+    }
+
+    #[test]
+    fn quiescence_stand_pat_improvement_is_exact() {
+        let board = Board::from_fen("r3k3/p7/8/8/8/8/8/R3K3 w - - 0 1");
+        let stand_pat = static_eval_with_nnue(&board, &None);
+        let tt = Arc::new(Tt::new(1));
+        let mut tables = SearchTables::new(&None);
+        assert!(!legal_captures(&board).is_empty());
+        let score = quiescence(
+            &board, stand_pat - 100, stand_pat + 1000, &AtomicU64::new(0), 0,
+            &tt, &Arc::new(AtomicBool::new(false)), &None,
+            &mut vec![board.position_hash()], &mut tables,
+        );
+        assert_eq!(score, stand_pat);
+        assert_eq!(tt.probe(board.position_hash()).unwrap().flag, TTFlag::Exact);
+    }
+
+    #[test]
+    fn mate_scores_adjust_for_probe_ply() {
+        let tt = Arc::new(Tt::new(1));
+        for score in [MATE_SCORE - 8, -MATE_SCORE + 8, 123] {
+            store_tt(&tt, 42, 6, score, TTFlag::Exact, None, 3);
+            let entry = probe_tt_cutoff(&tt, 42, 6, NEG_INF, POS_INF, 5).unwrap();
+            let expected = if score > MATE_BOUND { score - 2 }
+                else if score < -MATE_BOUND { score + 2 } else { score };
+            assert_eq!(entry.score, expected);
+        }
+    }
 }
