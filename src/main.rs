@@ -1,5 +1,6 @@
 #[macro_use]
 mod output;
+mod bench;
 mod board;
 mod eval;
 mod movegen;
@@ -39,6 +40,10 @@ struct Args {
     
     #[arg(long)]
     debug: bool,
+
+    /// Run the deterministic benchmark (fixed positions, fixed depth) and exit
+    #[arg(long, value_name = "DEPTH", num_args = 0..=1, default_missing_value = "10")]
+    bench: Option<u32>,
 }
 
 static DEBUG_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -103,6 +108,11 @@ async fn main() {
         }
     }
     
+    if let Some(depth) = args.bench {
+        bench::run(depth, &nnue_evaluator);
+        return;
+    }
+
     if !args.cli {
         let mut uci_engine = uci::UciEngine::new_with_nnue(nnue_evaluator);
         uci_engine.set_threads(args.threads);
