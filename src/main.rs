@@ -1,5 +1,6 @@
 #[macro_use]
 mod output;
+mod attacks;
 mod bench;
 mod board;
 mod eval;

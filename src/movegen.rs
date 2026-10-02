@@ -90,33 +90,7 @@ pub(crate) static KNIGHT_ATTACKS: [u64; 64] = build_knight_attacks();
 pub(crate) static KING_ATTACKS: [u64; 64] = build_king_attacks();
 pub(crate) static PAWN_ATTACKS: [[u64; 64]; 2] = build_pawn_attacks();
 
-fn ray_attacks(sq: u8, occupied: u64, directions: &[(i8, i8); 4]) -> u64 {
-    let from_rank = (sq / 8) as i8;
-    let from_file = (sq % 8) as i8;
-    let mut attacks = 0u64;
-    for &(dr, df) in directions {
-        let mut r = from_rank + dr;
-        let mut f = from_file + df;
-        while r >= 0 && r < 8 && f >= 0 && f < 8 {
-            let bit = 1u64 << (r * 8 + f);
-            attacks |= bit;
-            if (occupied & bit) != 0 {
-                break;
-            }
-            r += dr;
-            f += df;
-        }
-    }
-    attacks
-}
-
-pub(crate) fn bishop_attacks(sq: u8, occupied: u64) -> u64 {
-    ray_attacks(sq, occupied, &[(1, 1), (1, -1), (-1, 1), (-1, -1)])
-}
-
-pub(crate) fn rook_attacks(sq: u8, occupied: u64) -> u64 {
-    ray_attacks(sq, occupied, &[(1, 0), (-1, 0), (0, 1), (0, -1)])
-}
+pub(crate) use crate::attacks::{bishop_attacks, rook_attacks};
 
 pub(crate) fn attackers_to(board: &Board, sq: u8, occupied: u64) -> u64 {
     let s = sq as usize;
