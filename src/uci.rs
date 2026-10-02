@@ -23,6 +23,7 @@ pub struct UciEngine {
     ponder_start_time: Option<Instant>,
     ponder_time_params: Option<(Option<u64>, Option<u64>, Option<u64>)>,
     expected_ponder_move: Option<Move>,
+    move_overhead: AtomicU32,
     position_history: Vec<u64>,
     nnue: NnueEvaluator,
     book: Option<OptimizedPolyglotBook>,
@@ -46,6 +47,7 @@ impl UciEngine {
             ponder_start_time: None,
             ponder_time_params: None,
             expected_ponder_move: None,
+            move_overhead: AtomicU32::new(30),
             position_history: Vec::new(),
             nnue: NnueEvaluator::new(),
             book: None,
@@ -68,6 +70,7 @@ impl UciEngine {
             ponder_start_time: None,
             ponder_time_params: None,
             expected_ponder_move: None,
+            move_overhead: AtomicU32::new(30),
             position_history: Vec::new(),
             nnue,
             book: None,
@@ -152,7 +155,7 @@ impl UciEngine {
                 uci_println!("option name UCI_Chess960 type check default false");
                 uci_println!("option name Ponder type check default false");
                 uci_println!("option name MultiPV type spin default 1 min 1 max 500");
-                uci_println!("option name Move Overhead type spin default 10 min 0 max 5000");
+                uci_println!("option name Move Overhead type spin default 30 min 0 max 5000");
                 uci_println!("option name nodestime type spin default 0 min 0 max 10000");
                 uci_println!("option name EvalFile type string default <embedded>");
                 uci_println!("option name Book type string default <empty>");
@@ -401,7 +404,7 @@ impl UciEngine {
         let our_time = if self.board.is_white_to_move() { wtime } else { btime };
         let our_inc = if self.board.is_white_to_move() { _winc } else { _binc }.unwrap_or(0);
         let computed_mt = our_time.map(|time_left| {
-            let overhead = 30u64;
+            let overhead = self.move_overhead.load(Ordering::Relaxed) as u64;
             let usable = time_left.saturating_sub(overhead);
             let target = usable / 25 + our_inc * 3 / 4;
             let cap = (usable / 2).max(50);
@@ -650,7 +653,14 @@ impl UciEngine {
                         self.ponder_enabled.store(enabled, Ordering::SeqCst);
                         uci_println!("info string Ponder {}", if enabled { "enabled" } else { "disabled" });
                     }
-                    "uci_chess960" | "move overhead" | "nodestime" => {
+                    "move overhead" => {
+                        if let Ok(v) = value.parse::<u32>() {
+                            let v = v.min(5000);
+                            self.move_overhead.store(v, Ordering::SeqCst);
+                            uci_println!("info string Move Overhead set to {} ms", v);
+                        }
+                    }
+                    "uci_chess960" | "nodestime" => {
                         uci_println!("info string Option {} not yet implemented", option_name);
                     }
                     _ => {}
